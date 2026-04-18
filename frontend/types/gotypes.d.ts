@@ -705,6 +705,18 @@ declare global {
         lastupdated: number;
     };
 
+    // wshrpc.CommandTmuxDevConnectData
+    type CommandTmuxDevConnectData = {
+        sessionname?: string;
+        rows?: number;
+        cols?: number;
+    };
+
+    // wshrpc.CommandTmuxDevConnectRtnData
+    type CommandTmuxDevConnectRtnData = {
+        handle: string;
+    };
+
     // wshrpc.CommandVarData
     type CommandVarData = {
         key: string;

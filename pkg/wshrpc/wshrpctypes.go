@@ -211,6 +211,10 @@ type WshRpcInterface interface {
 	JobControllerDetachJobCommand(ctx context.Context, jobId string) error
 	JobControllerGetAllJobManagerStatusCommand(ctx context.Context) ([]*JobManagerStatusUpdate, error)
 	BlockJobStatusCommand(ctx context.Context, blockId string) (*BlockJobStatusData, error)
+
+	// tmux control-mode (M0: dev smoke-test surface, not yet user-facing)
+	TmuxDevConnectCommand(ctx context.Context, data CommandTmuxDevConnectData) (*CommandTmuxDevConnectRtnData, error)
+	TmuxDevCloseCommand(ctx context.Context, handle string) error
 }
 
 // for frontend
@@ -924,4 +928,17 @@ type CommandRemoteProcessListData struct {
 type CommandRemoteProcessSignalData struct {
 	Pid    int32  `json:"pid"`
 	Signal string `json:"signal"`
+}
+
+// CommandTmuxDevConnectData spawns a local tmux -CC session for M0
+// smoke-testing. SessionName is passed to `tmux new-session -A -s`, so
+// reusing the same name reattaches rather than failing.
+type CommandTmuxDevConnectData struct {
+	SessionName string `json:"sessionname,omitempty"`
+	Rows        int    `json:"rows,omitempty"`
+	Cols        int    `json:"cols,omitempty"`
+}
+
+type CommandTmuxDevConnectRtnData struct {
+	Handle string `json:"handle"`
 }

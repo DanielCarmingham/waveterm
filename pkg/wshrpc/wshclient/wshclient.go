@@ -936,6 +936,18 @@ func TestMultiArgCommand(w *wshutil.WshRpc, arg1 string, arg2 int, arg3 bool, op
 	return resp, err
 }
 
+// command "tmuxdevclose", wshserver.TmuxDevCloseCommand
+func TmuxDevCloseCommand(w *wshutil.WshRpc, data string, opts *wshrpc.RpcOpts) error {
+	_, err := sendRpcRequestCallHelper[any](w, "tmuxdevclose", data, opts)
+	return err
+}
+
+// command "tmuxdevconnect", wshserver.TmuxDevConnectCommand
+func TmuxDevConnectCommand(w *wshutil.WshRpc, data wshrpc.CommandTmuxDevConnectData, opts *wshrpc.RpcOpts) (*wshrpc.CommandTmuxDevConnectRtnData, error) {
+	resp, err := sendRpcRequestCallHelper[*wshrpc.CommandTmuxDevConnectRtnData](w, "tmuxdevconnect", data, opts)
+	return resp, err
+}
+
 // command "updatetabname", wshserver.UpdateTabNameCommand
 func UpdateTabNameCommand(w *wshutil.WshRpc, arg1 string, arg2 string, opts *wshrpc.RpcOpts) error {
 	_, err := sendRpcRequestCallHelper[any](w, "updatetabname", wshrpc.MultiArg{Args: []any{arg1, arg2}}, opts)

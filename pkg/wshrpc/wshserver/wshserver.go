@@ -38,6 +38,7 @@ import (
 	"github.com/wavetermdev/waveterm/pkg/remote/fileshare/wshfs"
 	"github.com/wavetermdev/waveterm/pkg/secretstore"
 	"github.com/wavetermdev/waveterm/pkg/suggestion"
+	"github.com/wavetermdev/waveterm/pkg/tmuxcc"
 	"github.com/wavetermdev/waveterm/pkg/telemetry"
 	"github.com/wavetermdev/waveterm/pkg/telemetry/telemetrydata"
 	"github.com/wavetermdev/waveterm/pkg/util/envutil"
@@ -1573,4 +1574,36 @@ func (ws *WshServer) JobControllerDetachJobCommand(ctx context.Context, jobId st
 
 func (ws *WshServer) BlockJobStatusCommand(ctx context.Context, blockId string) (*wshrpc.BlockJobStatusData, error) {
 	return jobcontroller.GetBlockJobStatus(ctx, blockId)
+}
+
+// TmuxDevConnectCommand is a development-only entry point that spawns a
+// local tmux -CC session and logs every parsed notification to the
+// wavesrv log. It lets us verify the control-mode parser end-to-end
+// before wiring tmux into the block/tab/workspace model.
+func (ws *WshServer) TmuxDevConnectCommand(ctx context.Context, data wshrpc.CommandTmuxDevConnectData) (*wshrpc.CommandTmuxDevConnectRtnData, error) {
+	sessionName := data.SessionName
+	if sessionName == "" {
+		sessionName = "waveterm-dev"
+	}
+	cfg := tmuxcc.SessionConfig{
+		Command: []string{"tmux", "-CC", "new-session", "-A", "-s", sessionName},
+		Rows:    data.Rows,
+		Cols:    data.Cols,
+		OnEvent: func(ev tmuxcc.Event) {
+			log.Printf("[tmuxcc:%s] %#v", sessionName, ev)
+		},
+		OnExit: func(err error) {
+			log.Printf("[tmuxcc:%s] session exited: %v", sessionName, err)
+		},
+	}
+	handle, _, err := tmuxcc.GlobalManager().Start(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("tmux connect: %w", err)
+	}
+	log.Printf("[tmuxcc] started session %q, handle=%s", sessionName, handle)
+	return &wshrpc.CommandTmuxDevConnectRtnData{Handle: handle}, nil
+}
+
+func (ws *WshServer) TmuxDevCloseCommand(ctx context.Context, handle string) error {
+	return tmuxcc.GlobalManager().Close(handle)
 }

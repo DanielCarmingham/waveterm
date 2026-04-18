@@ -942,6 +942,18 @@ export class RpcApiType {
         return client.wshRpcCall("testmultiarg", { args: [arg1, arg2, arg3] }, opts);
     }
 
+    // command "tmuxdevclose" [call]
+    TmuxDevCloseCommand(client: WshClient, data: string, opts?: RpcOpts): Promise<void> {
+        if (this.mockClient) return this.mockClient.mockWshRpcCall(client, "tmuxdevclose", data, opts);
+        return client.wshRpcCall("tmuxdevclose", data, opts);
+    }
+
+    // command "tmuxdevconnect" [call]
+    TmuxDevConnectCommand(client: WshClient, data: CommandTmuxDevConnectData, opts?: RpcOpts): Promise<CommandTmuxDevConnectRtnData> {
+        if (this.mockClient) return this.mockClient.mockWshRpcCall(client, "tmuxdevconnect", data, opts);
+        return client.wshRpcCall("tmuxdevconnect", data, opts);
+    }
+
     // command "updatetabname" [call]
     UpdateTabNameCommand(client: WshClient, arg1: string, arg2: string, opts?: RpcOpts): Promise<void> {
         if (this.mockClient) return this.mockClient.mockWshRpcCall(client, "updatetabname", { args: [arg1, arg2] }, opts);
