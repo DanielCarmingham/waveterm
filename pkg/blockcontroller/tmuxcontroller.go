@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -81,6 +82,31 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 	defer cancel()
 	if err := filestore.WFS.MakeFile(mkCtx, tc.BlockId, wavebase.BlockFile_Term, nil, wshrpc.FileOpts{MaxSize: DefaultTermMaxFileSize, Circular: true}); err != nil {
 		log.Printf("[tmuxcc] block %s make term file: %v (continuing)", tc.BlockId, err)
+	}
+	// Order matters: resize → capture → subscribe. Resize first so the
+	// captured buffer reflects the block's actual dimensions. Capture
+	// before subscribe so we seed xterm with the pane's current visible
+	// state without double-counting events. The tiny window between
+	// capture and subscribe can drop output but the subsequent stream
+	// will correct any drift.
+	if rtOpts != nil && rtOpts.TermSize.Rows > 0 && rtOpts.TermSize.Cols > 0 {
+		resizeCtx, cancelResize := context.WithTimeout(context.Background(), tmuxSendTimeout)
+		resizeCmd := fmt.Sprintf("resize-pane -t %s -x %d -y %d", paneID, rtOpts.TermSize.Cols, rtOpts.TermSize.Rows)
+		if _, err := session.SendCommand(resizeCtx, resizeCmd); err != nil {
+			log.Printf("[tmuxcc] block %s initial resize-pane: %v (continuing)", tc.BlockId, err)
+		}
+		cancelResize()
+	}
+	capCtx, cancelCap := context.WithTimeout(context.Background(), tmuxSendTimeout)
+	capLines, err := session.SendCommand(capCtx, fmt.Sprintf("capture-pane -p -e -J -t %s", paneID))
+	cancelCap()
+	if err != nil {
+		log.Printf("[tmuxcc] block %s capture-pane: %v (continuing)", tc.BlockId, err)
+	} else if len(capLines) > 0 {
+		seed := []byte(strings.Join(capLines, "\r\n") + "\r\n")
+		if err := HandleAppendBlockFile(tc.BlockId, wavebase.BlockFile_Term, seed); err != nil {
+			log.Printf("[tmuxcc] block %s seed append: %v (continuing)", tc.BlockId, err)
+		}
 	}
 	sub, err := tmuxcc.GlobalManager().Subscribe(handle, tc.handleEvent)
 	if err != nil {
