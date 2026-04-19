@@ -96,6 +96,22 @@ type EventPaneModeChanged struct {
 	PaneID string
 }
 
+type EventSessionWindowChanged struct {
+	SessionID string
+	WindowID  string
+}
+
+type EventClientSessionChanged struct {
+	ClientName  string
+	SessionID   string
+	SessionName string
+}
+
+type EventWindowPaneChanged struct {
+	WindowID string
+	PaneID   string
+}
+
 type EventExit struct {
 	Reason string
 }
@@ -128,6 +144,9 @@ func (EventSessionRenamed) isTmuxEvent()        {}
 func (EventSessionsChanged) isTmuxEvent()       {}
 func (EventLayoutChange) isTmuxEvent()          {}
 func (EventPaneModeChanged) isTmuxEvent()       {}
+func (EventSessionWindowChanged) isTmuxEvent()  {}
+func (EventClientSessionChanged) isTmuxEvent()  {}
+func (EventWindowPaneChanged) isTmuxEvent()     {}
 func (EventExit) isTmuxEvent()                  {}
 func (EventClientDetached) isTmuxEvent()        {}
 func (EventUnknownNotification) isTmuxEvent()   {}
@@ -139,11 +158,19 @@ var ErrNotNotification = errors.New("not a tmux-CC notification")
 
 // ParseNotification parses a single line of tmux-CC output. The line
 // must not contain a trailing newline. If the line does not start with
-// '%', ErrNotNotification is returned.
+// '%' (after any leading DCS prefix), ErrNotNotification is returned.
 //
 // Unknown notifications return EventUnknownNotification (not an error)
 // so the caller can log them without aborting the session.
 func ParseNotification(line string) (Event, error) {
+	// tmux opens control mode by emitting a DCS-style prefix like
+	// "\x1bP1000p" immediately before the first %begin. Strip any
+	// "\x1bP...p" prefix so the real notification parses normally.
+	if strings.HasPrefix(line, "\x1bP") {
+		if end := strings.IndexByte(line[2:], 'p'); end >= 0 {
+			line = line[2+end+1:]
+		}
+	}
 	if !strings.HasPrefix(line, "%") {
 		return nil, ErrNotNotification
 	}
@@ -187,6 +214,17 @@ func ParseNotification(line string) (Event, error) {
 		return parseLayoutChange(rest), nil
 	case "pane-mode-changed":
 		return EventPaneModeChanged{PaneID: strings.TrimSpace(rest)}, nil
+	case "session-window-changed":
+		sid, wid := splitFirst(rest, ' ')
+		return EventSessionWindowChanged{SessionID: sid, WindowID: wid}, nil
+	case "client-session-changed":
+		// Format: %client-session-changed <client-name> $<sid> <session-name>
+		clientName, r1 := splitFirst(rest, ' ')
+		sid, sessName := splitFirst(r1, ' ')
+		return EventClientSessionChanged{ClientName: clientName, SessionID: sid, SessionName: sessName}, nil
+	case "window-pane-changed":
+		wid, pid := splitFirst(rest, ' ')
+		return EventWindowPaneChanged{WindowID: wid, PaneID: pid}, nil
 	case "exit":
 		return EventExit{Reason: rest}, nil
 	case "client-detached":

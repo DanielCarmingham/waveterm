@@ -1596,12 +1596,29 @@ func (ws *WshServer) TmuxDevConnectCommand(ctx context.Context, data wshrpc.Comm
 			log.Printf("[tmuxcc:%s] session exited: %v", sessionName, err)
 		},
 	}
-	handle, _, err := tmuxcc.GlobalManager().Start(ctx, cfg)
+	handle, session, err := tmuxcc.GlobalManager().StartNamed(ctx, sessionName, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("tmux connect: %w", err)
 	}
-	log.Printf("[tmuxcc] started session %q, handle=%s", sessionName, handle)
-	return &wshrpc.CommandTmuxDevConnectRtnData{Handle: handle}, nil
+	paneID := ""
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	lines, qerr := session.SendCommand(queryCtx, fmt.Sprintf("display-message -p -t %s #{pane_id}", shellQuote(sessionName)))
+	cancel()
+	if qerr != nil {
+		log.Printf("[tmuxcc] display-message failed: %v", qerr)
+	} else if len(lines) > 0 {
+		paneID = strings.TrimSpace(lines[0])
+	}
+	log.Printf("[tmuxcc] started session %q, handle=%s, pane=%s", sessionName, handle, paneID)
+	return &wshrpc.CommandTmuxDevConnectRtnData{Handle: handle, PaneId: paneID}, nil
+}
+
+// shellQuote wraps s in single quotes for safe inclusion in a tmux
+// command argument. tmux parses its own command strings, so characters
+// like spaces or quotes in a session name would otherwise split the
+// argument.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func (ws *WshServer) TmuxDevCloseCommand(ctx context.Context, handle string) error {

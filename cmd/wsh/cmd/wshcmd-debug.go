@@ -5,8 +5,10 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/wavetermdev/waveterm/pkg/waveobj"
 	"github.com/wavetermdev/waveterm/pkg/wshrpc"
 	"github.com/wavetermdev/waveterm/pkg/wshrpc/wshclient"
 )
@@ -48,11 +50,20 @@ var debugTmuxCloseCmd = &cobra.Command{
 	Hidden: true,
 }
 
+var debugTmuxBlockCmd = &cobra.Command{
+	Use:    "tmux-block [session-name]",
+	Short:  "create a term block rendering the first pane of a tmux -CC session (one-shot connect + createblock)",
+	Args:   cobra.MaximumNArgs(1),
+	RunE:   debugTmuxBlockRun,
+	Hidden: true,
+}
+
 func init() {
 	debugCmd.AddCommand(debugBlockIdsCmd)
 	debugCmd.AddCommand(debugSendTelemetryCmd)
 	debugCmd.AddCommand(debugTmuxConnectCmd)
 	debugCmd.AddCommand(debugTmuxCloseCmd)
+	debugCmd.AddCommand(debugTmuxBlockCmd)
 	rootCmd.AddCommand(debugCmd)
 }
 
@@ -94,4 +105,39 @@ func debugTmuxConnectRun(cmd *cobra.Command, args []string) error {
 
 func debugTmuxCloseRun(cmd *cobra.Command, args []string) error {
 	return wshclient.TmuxDevCloseCommand(RpcClient, args[0], nil)
+}
+
+func debugTmuxBlockRun(cmd *cobra.Command, args []string) error {
+	tabId := getTabIdFromEnv()
+	if tabId == "" {
+		return fmt.Errorf("no WAVETERM_TABID env var set")
+	}
+	connectData := wshrpc.CommandTmuxDevConnectData{}
+	if len(args) > 0 {
+		connectData.SessionName = args[0]
+	}
+	resp, err := wshclient.TmuxDevConnectCommand(RpcClient, connectData, nil)
+	if err != nil {
+		return fmt.Errorf("tmux connect: %w", err)
+	}
+	if resp.PaneId == "" {
+		return fmt.Errorf("tmux connect: no pane id returned (handle=%s) — session may be empty", resp.Handle)
+	}
+	meta := map[string]any{
+		waveobj.MetaKey_View:              "term",
+		waveobj.MetaKey_Controller:        "tmux",
+		waveobj.MetaKey_TmuxSessionHandle: resp.Handle,
+		waveobj.MetaKey_TmuxPaneId:        resp.PaneId,
+	}
+	createData := wshrpc.CommandCreateBlockData{
+		TabId:    tabId,
+		BlockDef: &waveobj.BlockDef{Meta: meta},
+		Focused:  true,
+	}
+	oref, err := wshclient.CreateBlockCommand(RpcClient, createData, nil)
+	if err != nil {
+		return fmt.Errorf("create block failed: %w", err)
+	}
+	WriteStdout("tmux block created: block=%s handle=%s pane=%s\n", oref.OID, resp.Handle, resp.PaneId)
+	return nil
 }

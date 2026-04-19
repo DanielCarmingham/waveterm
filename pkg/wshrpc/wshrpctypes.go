@@ -941,4 +941,5 @@ type CommandTmuxDevConnectData struct {
 
 type CommandTmuxDevConnectRtnData struct {
 	Handle string `json:"handle"`
+	PaneId string `json:"paneid,omitempty"`
 }

@@ -95,6 +95,26 @@ func TestParseNotification(t *testing.T) {
 			want: tmuxcc.EventClientDetached{Name: "client-1"},
 		},
 		{
+			name: "session-window-changed",
+			line: "%session-window-changed $2 @5",
+			want: tmuxcc.EventSessionWindowChanged{SessionID: "$2", WindowID: "@5"},
+		},
+		{
+			name: "client-session-changed",
+			line: "%client-session-changed /dev/ttys000 $2 waveterm",
+			want: tmuxcc.EventClientSessionChanged{ClientName: "/dev/ttys000", SessionID: "$2", SessionName: "waveterm"},
+		},
+		{
+			name: "window-pane-changed",
+			line: "%window-pane-changed @5 %128",
+			want: tmuxcc.EventWindowPaneChanged{WindowID: "@5", PaneID: "%128"},
+		},
+		{
+			name: "dcs prefixed begin",
+			line: "\x1bP1000p%begin 1700000000 1 0",
+			want: tmuxcc.EventBegin{Timestamp: "1700000000", CmdNum: "1", Flags: "0"},
+		},
+		{
 			name: "unknown",
 			line: "%never-heard-of-it foo bar",
 			want: tmuxcc.EventUnknownNotification{Name: "never-heard-of-it", Raw: "%never-heard-of-it foo bar"},

@@ -715,6 +715,7 @@ declare global {
     // wshrpc.CommandTmuxDevConnectRtnData
     type CommandTmuxDevConnectRtnData = {
         handle: string;
+        paneid?: string;
     };
 
     // wshrpc.CommandVarData
