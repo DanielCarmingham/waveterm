@@ -93,9 +93,17 @@ type commandResult struct {
 // StartSession spawns tmux in control mode and begins streaming events
 // to cfg.OnEvent. The caller owns the returned *Session and must call
 // Close() to release the pty and reap the process.
+//
+// ctx is used only for cancelling the spawn itself (e.g. exec lookup);
+// it is NOT tied to the lifetime of the tmux process. Bound-to-caller
+// contexts from short-lived RPC handlers would otherwise kill tmux as
+// soon as the RPC returned.
 func StartSession(ctx context.Context, cfg SessionConfig) (*Session, error) {
 	if len(cfg.Command) == 0 {
 		return nil, errors.New("tmuxcc: empty Command")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	rows, cols := cfg.Rows, cfg.Cols
 	if rows <= 0 {
@@ -104,7 +112,7 @@ func StartSession(ctx context.Context, cfg SessionConfig) (*Session, error) {
 	if cols <= 0 {
 		cols = defaultCols
 	}
-	cmd := exec.CommandContext(ctx, cfg.Command[0], cfg.Command[1:]...)
+	cmd := exec.Command(cfg.Command[0], cfg.Command[1:]...)
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
 	if err != nil {
 		return nil, fmt.Errorf("tmuxcc: starting tmux: %w", err)
