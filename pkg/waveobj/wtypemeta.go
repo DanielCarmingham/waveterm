@@ -142,6 +142,9 @@ type MetaTSType struct {
 	MarkdownFontSize      float64 `json:"markdown:fontsize,omitempty"`
 	MarkdownFixedFontSize float64 `json:"markdown:fixedfontsize,omitempty"`
 
+	TmuxSessionHandle string `json:"tmux:sessionhandle,omitempty"`
+	TmuxPaneId        string `json:"tmux:paneid,omitempty"`
+
 	TsunamiClear          bool              `json:"tsunami:*,omitempty"`
 	TsunamiSdkReplacePath string            `json:"tsunami:sdkreplacepath,omitempty"`
 	TsunamiAppPath        string            `json:"tsunami:apppath,omitempty"`

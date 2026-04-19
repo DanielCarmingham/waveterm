@@ -33,6 +33,7 @@ const (
 	BlockController_Shell   = "shell"
 	BlockController_Cmd     = "cmd"
 	BlockController_Tsunami = "tsunami"
+	BlockController_Tmux    = "tmux"
 )
 
 const (
@@ -209,6 +210,10 @@ func ResyncController(ctx context.Context, tabId string, blockId string, rtOpts 
 			if controllerName != BlockController_Tsunami {
 				needsReplace = true
 			}
+		case *TmuxController:
+			if controllerName != BlockController_Tmux {
+				needsReplace = true
+			}
 		}
 
 		if needsReplace {
@@ -254,6 +259,10 @@ func ResyncController(ctx context.Context, tabId string, blockId string, rtOpts 
 
 		case BlockController_Tsunami:
 			controller = MakeTsunamiController(tabId, blockId, connName)
+			registerController(blockId, controller)
+
+		case BlockController_Tmux:
+			controller = MakeTmuxController(tabId, blockId, connName)
 			registerController(blockId, controller)
 
 		default:
