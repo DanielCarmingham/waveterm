@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/wavetermdev/waveterm/pkg/filestore"
+	"github.com/wavetermdev/waveterm/pkg/panichandler"
 	"github.com/wavetermdev/waveterm/pkg/tmuxcc"
 	"github.com/wavetermdev/waveterm/pkg/utilds"
 	"github.com/wavetermdev/waveterm/pkg/wavebase"
@@ -182,9 +183,15 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 
 func (tc *TmuxController) Stop(graceful bool, newStatus string, destroy bool) {
 	var sub *tmuxcc.Subscription
+	var session *tmuxcc.Session
+	var paneID string
+	var handle string
 	var statusChanged bool
 	tc.WithLock(func() {
 		sub = tc.Subscription
+		session = tc.Session
+		paneID = tc.PaneID
+		handle = tc.SessionHandle
 		tc.Subscription = nil
 		if newStatus != tc.ProcStatus {
 			tc.ProcStatus = newStatus
@@ -193,6 +200,23 @@ func (tc *TmuxController) Stop(graceful bool, newStatus string, destroy bool) {
 	})
 	if sub != nil {
 		sub.Unsubscribe()
+	}
+	// On destroy, propagate the block close to tmux so the pane
+	// disappears too. Also drop the pane from the orchestrator's map
+	// so the subsequent layout-change doesn't race to delete this
+	// already-being-deleted block.
+	if destroy && session != nil && paneID != "" {
+		if handle != "" {
+			ForgetOrchestratorPane(handle, paneID)
+		}
+		go func() {
+			defer func() { panichandler.PanicHandler("tmuxcc.TmuxController.killPane", recover()) }()
+			killCtx, cancel := context.WithTimeout(context.Background(), tmuxSendTimeout)
+			defer cancel()
+			if _, err := session.SendCommand(killCtx, fmt.Sprintf("kill-pane -t %s", paneID)); err != nil {
+				log.Printf("[tmuxcc] kill-pane %s: %v", paneID, err)
+			}
+		}()
 	}
 	if statusChanged {
 		tc.sendUpdate()

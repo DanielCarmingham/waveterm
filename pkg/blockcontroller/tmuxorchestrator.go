@@ -15,6 +15,7 @@ import (
 	"github.com/wavetermdev/waveterm/pkg/waveobj"
 	"github.com/wavetermdev/waveterm/pkg/wcore"
 	"github.com/wavetermdev/waveterm/pkg/wps"
+	"github.com/wavetermdev/waveterm/pkg/wstore"
 )
 
 // TmuxOrchestrator mirrors one tmux window's pane layout into a
@@ -110,6 +111,22 @@ func StartTmuxOrchestrator(handle string, sessionName string, tabID string, seed
 	return nil
 }
 
+// ForgetOrchestratorPane removes a pane→block entry from the
+// orchestrator for handle, if any. Call this when a block is being
+// destroyed from the waveterm side so the orchestrator doesn't try to
+// double-delete it when tmux's subsequent %layout-change arrives.
+func ForgetOrchestratorPane(handle string, paneID string) {
+	orchestratorMu.Lock()
+	o, ok := orchestrators[handle]
+	orchestratorMu.Unlock()
+	if !ok {
+		return
+	}
+	o.mu.Lock()
+	delete(o.paneBlocks, paneID)
+	o.mu.Unlock()
+}
+
 // Stop detaches the orchestrator's subscription. The managed blocks
 // are left in place; only the tmux→waveterm sync is halted.
 func (o *TmuxOrchestrator) Stop() {
@@ -129,7 +146,41 @@ func (o *TmuxOrchestrator) handleEvent(ev tmuxcc.Event) {
 		o.onLayoutChange(v.WindowID, v.Layout)
 	case tmuxcc.EventWindowClose:
 		o.onWindowClose(v.WindowID)
+	case tmuxcc.EventWindowRenamed:
+		o.onWindowRenamed(v.WindowID, v.Name)
 	}
+}
+
+func (o *TmuxOrchestrator) onWindowRenamed(windowID, name string) {
+	o.mu.Lock()
+	if o.windowID != windowID {
+		o.mu.Unlock()
+		return
+	}
+	blocks := make([]string, 0, len(o.paneBlocks))
+	for _, bid := range o.paneBlocks {
+		blocks = append(blocks, bid)
+	}
+	o.mu.Unlock()
+	for _, bid := range blocks {
+		if err := o.setBlockTitle(bid, name); err != nil {
+			log.Printf("[tmuxorchestrator] set title on block %s: %v", bid, err)
+		}
+	}
+}
+
+func (o *TmuxOrchestrator) setBlockTitle(blockID, title string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ctx = waveobj.ContextWithUpdates(ctx)
+	oref := waveobj.MakeORef(waveobj.OType_Block, blockID)
+	if err := wstore.UpdateObjectMeta(ctx, oref, waveobj.MetaMapType{waveobj.MetaKey_FrameTitle: title}, false); err != nil {
+		return err
+	}
+	wcore.SendWaveObjUpdate(oref)
+	updates := waveobj.ContextGetUpdatesRtn(ctx)
+	wps.Broker.SendUpdateEvents(updates)
+	return nil
 }
 
 // bootstrapLayout runs once after Start: asks tmux for the current
