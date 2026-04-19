@@ -1210,6 +1210,7 @@ declare global {
         "markdown:fontsize"?: number;
         "markdown:fixedfontsize"?: number;
         "tmux:sessionhandle"?: string;
+        "tmux:sessionname"?: string;
         "tmux:paneid"?: string;
         "tsunami:*"?: boolean;
         "tsunami:sdkreplacepath"?: string;

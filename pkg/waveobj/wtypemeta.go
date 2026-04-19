@@ -143,6 +143,7 @@ type MetaTSType struct {
 	MarkdownFixedFontSize float64 `json:"markdown:fixedfontsize,omitempty"`
 
 	TmuxSessionHandle string `json:"tmux:sessionhandle,omitempty"`
+	TmuxSessionName   string `json:"tmux:sessionname,omitempty"`
 	TmuxPaneId        string `json:"tmux:paneid,omitempty"`
 
 	TsunamiClear          bool              `json:"tsunami:*,omitempty"`

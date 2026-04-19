@@ -198,6 +198,27 @@ func (m *Manager) Close(handle string) error {
 	return slot.session.Close()
 }
 
+// EnsureLocalSession returns a handle and session for a locally-spawned
+// "tmux -CC new-session -A -s <name>" session. If one is already
+// registered under name, the existing handle/session are returned
+// unchanged; otherwise a new one is spawned and registered.
+//
+// Events are logged to stderr with an [tmuxcc:<name>] prefix so a
+// single subscriber style works for orchestrated + debug sessions
+// alike.
+func (m *Manager) EnsureLocalSession(ctx context.Context, name string) (string, *Session, error) {
+	if name == "" {
+		return "", nil, fmt.Errorf("tmuxcc: EnsureLocalSession requires a name")
+	}
+	if h, sess := m.GetByName(name); sess != nil {
+		return h, sess, nil
+	}
+	cfg := SessionConfig{
+		Command: []string{"tmux", "-CC", "new-session", "-A", "-s", name},
+	}
+	return m.StartNamed(ctx, name, cfg)
+}
+
 // Handles returns a snapshot of active handles.
 func (m *Manager) Handles() []string {
 	m.mu.Lock()

@@ -112,10 +112,11 @@ func debugTmuxBlockRun(cmd *cobra.Command, args []string) error {
 	if tabId == "" {
 		return fmt.Errorf("no WAVETERM_TABID env var set")
 	}
-	connectData := wshrpc.CommandTmuxDevConnectData{}
+	sessionName := "waveterm-dev"
 	if len(args) > 0 {
-		connectData.SessionName = args[0]
+		sessionName = args[0]
 	}
+	connectData := wshrpc.CommandTmuxDevConnectData{SessionName: sessionName}
 	resp, err := wshclient.TmuxDevConnectCommand(RpcClient, connectData, nil)
 	if err != nil {
 		return fmt.Errorf("tmux connect: %w", err)
@@ -127,6 +128,7 @@ func debugTmuxBlockRun(cmd *cobra.Command, args []string) error {
 		waveobj.MetaKey_View:              "term",
 		waveobj.MetaKey_Controller:        "tmux",
 		waveobj.MetaKey_TmuxSessionHandle: resp.Handle,
+		waveobj.MetaKey_TmuxSessionName:   sessionName,
 		waveobj.MetaKey_TmuxPaneId:        resp.PaneId,
 	}
 	createData := wshrpc.CommandCreateBlockData{

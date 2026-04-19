@@ -29,10 +29,11 @@ import (
 type TmuxOrchestrator struct {
 	mu sync.Mutex
 
-	handle   string
-	session  *tmuxcc.Session
-	tabID    string
-	windowID string // set on first layout-change containing our seed pane
+	handle      string
+	sessionName string // stable identity; survives wavesrv restart
+	session     *tmuxcc.Session
+	tabID       string
+	windowID    string // set on first layout-change containing our seed pane
 
 	paneBlocks map[string]string // tmux paneID -> waveterm blockID
 
@@ -49,7 +50,7 @@ var (
 // that session. Call this from every TmuxController's Start so the
 // session-wide orchestrator always knows about every materialized
 // block — including blocks created externally via CreateBlock.
-func EnsureTmuxOrchestrator(handle string, tabID string, paneID string, blockID string) error {
+func EnsureTmuxOrchestrator(handle string, sessionName string, tabID string, paneID string, blockID string) error {
 	if handle == "" || paneID == "" || blockID == "" {
 		return fmt.Errorf("tmuxorchestrator: EnsureTmuxOrchestrator requires handle, paneID, blockID")
 	}
@@ -59,19 +60,22 @@ func EnsureTmuxOrchestrator(handle string, tabID string, paneID string, blockID 
 	if ok {
 		existing.mu.Lock()
 		existing.paneBlocks[paneID] = blockID
+		if existing.sessionName == "" {
+			existing.sessionName = sessionName
+		}
 		existing.mu.Unlock()
 		return nil
 	}
 	if tabID == "" {
 		return fmt.Errorf("tmuxorchestrator: tabID required when creating orchestrator")
 	}
-	return StartTmuxOrchestrator(handle, tabID, paneID, blockID)
+	return StartTmuxOrchestrator(handle, sessionName, tabID, paneID, blockID)
 }
 
 // StartTmuxOrchestrator registers a seed pane+block pair and begins
 // watching the tmux session for layout changes. Idempotent per handle:
 // a second call replaces the prior orchestrator for that session.
-func StartTmuxOrchestrator(handle string, tabID string, seedPaneID string, seedBlockID string) error {
+func StartTmuxOrchestrator(handle string, sessionName string, tabID string, seedPaneID string, seedBlockID string) error {
 	if handle == "" || tabID == "" || seedPaneID == "" || seedBlockID == "" {
 		return fmt.Errorf("tmuxorchestrator: StartTmuxOrchestrator requires all args")
 	}
@@ -84,10 +88,11 @@ func StartTmuxOrchestrator(handle string, tabID string, seedPaneID string, seedB
 		prev.Stop()
 	}
 	o := &TmuxOrchestrator{
-		handle:     handle,
-		session:    session,
-		tabID:      tabID,
-		paneBlocks: map[string]string{seedPaneID: seedBlockID},
+		handle:      handle,
+		sessionName: sessionName,
+		session:     session,
+		tabID:       tabID,
+		paneBlocks:  map[string]string{seedPaneID: seedBlockID},
 	}
 	orchestrators[handle] = o
 	orchestratorMu.Unlock()
@@ -273,6 +278,7 @@ func (o *TmuxOrchestrator) createBlockForPane(paneID, anchorBlockID, splitType, 
 		waveobj.MetaKey_View:              "term",
 		waveobj.MetaKey_Controller:        "tmux",
 		waveobj.MetaKey_TmuxSessionHandle: o.handle,
+		waveobj.MetaKey_TmuxSessionName:   o.sessionName,
 		waveobj.MetaKey_TmuxPaneId:        paneID,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

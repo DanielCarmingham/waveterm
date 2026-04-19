@@ -87,16 +87,31 @@ func (tc *TmuxController) WithLock(f func()) {
 
 func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapType, rtOpts *waveobj.RuntimeOpts, force bool) error {
 	handle := blockMeta.GetString(waveobj.MetaKey_TmuxSessionHandle, "")
-	if handle == "" {
-		return fmt.Errorf("tmux block missing %q meta", waveobj.MetaKey_TmuxSessionHandle)
-	}
+	sessionName := blockMeta.GetString(waveobj.MetaKey_TmuxSessionName, "")
 	paneID := blockMeta.GetString(waveobj.MetaKey_TmuxPaneId, "")
 	if paneID == "" {
 		return fmt.Errorf("tmux block missing %q meta", waveobj.MetaKey_TmuxPaneId)
 	}
-	session := tmuxcc.GlobalManager().Get(handle)
+	var session *tmuxcc.Session
+	if handle != "" {
+		session = tmuxcc.GlobalManager().Get(handle)
+	}
+	// Handle in block meta is an in-memory hint that doesn't survive
+	// wavesrv restart. Fall back to the stable session name, which
+	// reattaches to the existing tmux server session (via
+	// new-session -A -s) and registers a fresh handle.
+	if session == nil && sessionName != "" {
+		ensureCtx, ensureCancel := context.WithTimeout(context.Background(), tmuxSendTimeout)
+		newHandle, newSession, err := tmuxcc.GlobalManager().EnsureLocalSession(ensureCtx, sessionName)
+		ensureCancel()
+		if err != nil {
+			return fmt.Errorf("reattach tmux session %q: %w", sessionName, err)
+		}
+		handle = newHandle
+		session = newSession
+	}
 	if session == nil {
-		return fmt.Errorf("no tmux session with handle %q", handle)
+		return fmt.Errorf("no tmux session for block (handle=%q name=%q)", handle, sessionName)
 	}
 	mkCtx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
 	defer cancel()
@@ -158,7 +173,7 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 		tc.Subscription = sub
 		tc.ProcStatus = Status_Running
 	})
-	if err := EnsureTmuxOrchestrator(handle, tc.TabId, paneID, tc.BlockId); err != nil {
+	if err := EnsureTmuxOrchestrator(handle, sessionName, tc.TabId, paneID, tc.BlockId); err != nil {
 		log.Printf("[tmuxcc] block %s orchestrator register: %v (continuing)", tc.BlockId, err)
 	}
 	tc.sendUpdate()

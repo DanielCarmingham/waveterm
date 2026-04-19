@@ -139,6 +139,7 @@ const (
 	MetaKey_MarkdownFixedFontSize            = "markdown:fixedfontsize"
 
 	MetaKey_TmuxSessionHandle                = "tmux:sessionhandle"
+	MetaKey_TmuxSessionName                  = "tmux:sessionname"
 	MetaKey_TmuxPaneId                       = "tmux:paneid"
 
 	MetaKey_TsunamiClear                     = "tsunami:*"
