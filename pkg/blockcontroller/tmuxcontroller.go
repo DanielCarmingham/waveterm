@@ -11,11 +11,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/wavetermdev/waveterm/pkg/filestore"
 	"github.com/wavetermdev/waveterm/pkg/tmuxcc"
 	"github.com/wavetermdev/waveterm/pkg/utilds"
 	"github.com/wavetermdev/waveterm/pkg/wavebase"
 	"github.com/wavetermdev/waveterm/pkg/waveobj"
 	"github.com/wavetermdev/waveterm/pkg/wps"
+	"github.com/wavetermdev/waveterm/pkg/wshrpc"
 )
 
 // tmuxSendTimeout bounds each send-keys / resize-pane call. tmux
@@ -74,6 +76,11 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 	session := tmuxcc.GlobalManager().Get(handle)
 	if session == nil {
 		return fmt.Errorf("no tmux session with handle %q", handle)
+	}
+	mkCtx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
+	defer cancel()
+	if err := filestore.WFS.MakeFile(mkCtx, tc.BlockId, wavebase.BlockFile_Term, nil, wshrpc.FileOpts{MaxSize: DefaultTermMaxFileSize, Circular: true}); err != nil {
+		log.Printf("[tmuxcc] block %s make term file: %v (continuing)", tc.BlockId, err)
 	}
 	sub, err := tmuxcc.GlobalManager().Subscribe(handle, tc.handleEvent)
 	if err != nil {
