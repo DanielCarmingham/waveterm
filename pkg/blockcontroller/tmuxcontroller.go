@@ -154,9 +154,12 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 	// will correct any drift.
 	if rtOpts != nil && rtOpts.TermSize.Rows > 0 && rtOpts.TermSize.Cols > 0 {
 		resizeCtx, cancelResize := context.WithTimeout(context.Background(), tmuxSendTimeout)
-		resizeCmd := fmt.Sprintf("resize-pane -t %s -x %d -y %d", paneID, rtOpts.TermSize.Cols, rtOpts.TermSize.Rows)
+		// resize-window sizes the entire window. resize-pane only
+		// shifts borders within a multi-pane layout and is silently
+		// ignored for single-pane windows.
+		resizeCmd := fmt.Sprintf("resize-window -t %s -x %d -y %d", paneID, rtOpts.TermSize.Cols, rtOpts.TermSize.Rows)
 		if _, err := session.SendCommand(resizeCtx, resizeCmd); err != nil {
-			log.Printf("[tmuxcc] block %s initial resize-pane: %v (continuing)", tc.BlockId, err)
+			log.Printf("[tmuxcc] block %s initial resize-window: %v (continuing)", tc.BlockId, err)
 		}
 		cancelResize()
 	}
@@ -336,9 +339,9 @@ func (tc *TmuxController) SendInput(input *BlockInputUnion) error {
 		}
 	}
 	if input.TermSize != nil && input.TermSize.Rows > 0 && input.TermSize.Cols > 0 {
-		cmd := fmt.Sprintf("resize-pane -t %s -x %d -y %d", paneID, input.TermSize.Cols, input.TermSize.Rows)
+		cmd := fmt.Sprintf("resize-window -t %s -x %d -y %d", paneID, input.TermSize.Cols, input.TermSize.Rows)
 		if _, err := session.SendCommand(ctx, cmd); err != nil {
-			return fmt.Errorf("tmux resize-pane: %w", err)
+			return fmt.Errorf("tmux resize-window: %w", err)
 		}
 	}
 	return nil
