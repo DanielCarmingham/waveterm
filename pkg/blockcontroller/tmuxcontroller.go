@@ -114,6 +114,21 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 	if session == nil {
 		return fmt.Errorf("no tmux session for block (handle=%q name=%q)", handle, sessionName)
 	}
+	// Verify the pane still exists on the tmux server. It may not if
+	// the block persisted to disk but its pane was killed (including
+	// the common case where the entire session died and a reconnect
+	// created a fresh one with different pane ids).
+	verifyCtx, cancelVerify := context.WithTimeout(context.Background(), tmuxSendTimeout)
+	_, verifyErr := session.SendCommand(verifyCtx, fmt.Sprintf("display-message -p -t %s %s", paneID, strconv.Quote("#{pane_id}")))
+	cancelVerify()
+	if verifyErr != nil && strings.Contains(verifyErr.Error(), "can't find pane") {
+		tc.writeStalePaneMessage(paneID, sessionName)
+		tc.WithLock(func() {
+			tc.ProcStatus = Status_Done
+		})
+		tc.sendUpdate()
+		return nil
+	}
 	mkCtx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
 	defer cancel()
 	if err := filestore.WFS.MakeFile(mkCtx, tc.BlockId, wavebase.BlockFile_Term, nil, wshrpc.FileOpts{MaxSize: DefaultTermMaxFileSize, Circular: true}); err != nil {
@@ -182,6 +197,16 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 	go tc.setInitialTitle(session, paneID)
 	tc.sendUpdate()
 	return nil
+}
+
+func (tc *TmuxController) writeStalePaneMessage(paneID, sessionName string) {
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
+	defer cancel()
+	_ = filestore.WFS.MakeFile(ctx, tc.BlockId, wavebase.BlockFile_Term, nil, wshrpc.FileOpts{MaxSize: DefaultTermMaxFileSize, Circular: true})
+	msg := fmt.Sprintf("\r\n\x1b[33m[tmux pane %s no longer exists in session %q — close this block to clean up]\x1b[0m\r\n", paneID, sessionName)
+	if err := HandleAppendBlockFile(tc.BlockId, wavebase.BlockFile_Term, []byte(msg)); err != nil {
+		log.Printf("[tmuxcc] block %s stale-pane message: %v", tc.BlockId, err)
+	}
 }
 
 func (tc *TmuxController) setInitialTitle(session *tmuxcc.Session, paneID string) {
