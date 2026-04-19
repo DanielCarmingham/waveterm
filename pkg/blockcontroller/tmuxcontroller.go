@@ -199,6 +199,19 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 		tc.Subscription = sub
 		tc.ProcStatus = Status_Running
 	})
+	// Force tmux to resend the current pane state as a full redraw.
+	// Without this, xterm's state (seeded from capture-pane) drifts
+	// from what tmux thinks when other clients or resizes mutate the
+	// pane, producing visible artifacts. Best-effort — don't block
+	// Start on errors.
+	go func() {
+		defer func() { panichandler.PanicHandler("tmuxcc.TmuxController.refresh", recover()) }()
+		ctx, cancel := context.WithTimeout(context.Background(), tmuxSendTimeout)
+		defer cancel()
+		if _, err := session.SendCommand(ctx, "refresh-client -l"); err != nil {
+			log.Printf("[tmuxcc] block %s refresh-client: %v", tc.BlockId, err)
+		}
+	}()
 	if err := EnsureTmuxOrchestrator(handle, sessionName, tc.TabId, paneID, tc.BlockId); err != nil {
 		log.Printf("[tmuxcc] block %s orchestrator register: %v (continuing)", tc.BlockId, err)
 	}
