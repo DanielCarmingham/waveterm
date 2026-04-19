@@ -15,6 +15,8 @@ import (
 
 	"github.com/wavetermdev/waveterm/pkg/filestore"
 	"github.com/wavetermdev/waveterm/pkg/panichandler"
+	"github.com/wavetermdev/waveterm/pkg/remote"
+	"github.com/wavetermdev/waveterm/pkg/remote/conncontroller"
 	"github.com/wavetermdev/waveterm/pkg/tmuxcc"
 	"github.com/wavetermdev/waveterm/pkg/utilds"
 	"github.com/wavetermdev/waveterm/pkg/wavebase"
@@ -22,6 +24,32 @@ import (
 	"github.com/wavetermdev/waveterm/pkg/wps"
 	"github.com/wavetermdev/waveterm/pkg/wshrpc"
 )
+
+// isRemoteConn returns true if connName refers to a non-local SSH
+// connection. Empty or "local*" means local.
+func isRemoteConn(connName string) bool {
+	if connName == "" {
+		return false
+	}
+	return !conncontroller.IsLocalConnName(connName) && !conncontroller.IsWslConnName(connName)
+}
+
+// resolveSSHConn looks up the SSH connection referenced by connName.
+// Returns an error if the connection isn't known/connected.
+func resolveSSHConn(connName string) (*conncontroller.SSHConn, error) {
+	opts, err := remote.ParseOpts(connName)
+	if err != nil {
+		return nil, fmt.Errorf("parse connection %q: %w", connName, err)
+	}
+	conn := conncontroller.MaybeGetConn(opts)
+	if conn == nil {
+		return nil, fmt.Errorf("no connection found for %q (connect first)", connName)
+	}
+	if conn.DeriveConnStatus().Status != conncontroller.Status_Connected {
+		return nil, fmt.Errorf("connection %q not connected", connName)
+	}
+	return conn, nil
+}
 
 // parseCursorState parses the ";"-separated output of tmux's
 // display-message '#{cursor_y};#{cursor_x};#{pane_height}' query.
@@ -94,6 +122,7 @@ func (tc *TmuxController) WithLock(f func()) {
 func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapType, rtOpts *waveobj.RuntimeOpts, force bool) error {
 	handle := blockMeta.GetString(waveobj.MetaKey_TmuxSessionHandle, "")
 	sessionName := blockMeta.GetString(waveobj.MetaKey_TmuxSessionName, "")
+	connName := blockMeta.GetString(waveobj.MetaKey_Connection, "")
 	paneID := blockMeta.GetString(waveobj.MetaKey_TmuxPaneId, "")
 	if paneID == "" {
 		return fmt.Errorf("tmux block missing %q meta", waveobj.MetaKey_TmuxPaneId)
@@ -103,15 +132,27 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 		session = tmuxcc.GlobalManager().Get(handle)
 	}
 	// Handle in block meta is an in-memory hint that doesn't survive
-	// wavesrv restart. Fall back to the stable session name, which
-	// reattaches to the existing tmux server session (via
-	// new-session -A -s) and registers a fresh handle.
+	// wavesrv restart. Fall back to the stable session name plus
+	// optional connection, which reattaches to the existing tmux
+	// server session (via new-session -A -s) and registers a fresh
+	// handle. When connName is set and non-local, use SSH.
 	if session == nil && sessionName != "" {
 		ensureCtx, ensureCancel := context.WithTimeout(context.Background(), tmuxSendTimeout)
-		newHandle, newSession, err := tmuxcc.GlobalManager().EnsureLocalSession(ensureCtx, sessionName)
+		var newHandle string
+		var newSession *tmuxcc.Session
+		var err error
+		if isRemoteConn(connName) {
+			var conn *conncontroller.SSHConn
+			conn, err = resolveSSHConn(connName)
+			if err == nil {
+				newHandle, newSession, err = tmuxcc.GlobalManager().EnsureRemoteSession(ensureCtx, conn, sessionName)
+			}
+		} else {
+			newHandle, newSession, err = tmuxcc.GlobalManager().EnsureLocalSession(ensureCtx, sessionName)
+		}
 		ensureCancel()
 		if err != nil {
-			return fmt.Errorf("reattach tmux session %q: %w", sessionName, err)
+			return fmt.Errorf("reattach tmux session %q (conn=%q): %w", sessionName, connName, err)
 		}
 		handle = newHandle
 		session = newSession

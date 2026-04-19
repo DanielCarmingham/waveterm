@@ -708,6 +708,7 @@ declare global {
     // wshrpc.CommandTmuxDevConnectData
     type CommandTmuxDevConnectData = {
         sessionname?: string;
+        connname?: string;
         rows?: number;
         cols?: number;
     };

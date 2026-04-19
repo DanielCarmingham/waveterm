@@ -9,12 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/creack/pty"
 	"github.com/wavetermdev/waveterm/pkg/panichandler"
 )
 
@@ -60,11 +58,10 @@ type SessionConfig struct {
 // from any goroutine. OnEvent fires on one goroutine and must not
 // block.
 type Session struct {
-	cfg SessionConfig
-	cmd *exec.Cmd
-	tty pty.Pty
+	cfg       SessionConfig
+	transport Transport
 
-	stdinMu sync.Mutex // serializes writes to tty
+	stdinMu sync.Mutex // serializes writes to transport
 
 	// pendingMu guards pending. Commands are FIFO: tmux returns
 	// responses in the order we sent them, so we match by position.
@@ -112,16 +109,30 @@ func StartSession(ctx context.Context, cfg SessionConfig) (*Session, error) {
 	if cols <= 0 {
 		cols = defaultCols
 	}
-	cmd := exec.Command(cfg.Command[0], cfg.Command[1:]...)
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
+	t, err := startLocalTransport(cfg.Command, rows, cols)
 	if err != nil {
-		return nil, fmt.Errorf("tmuxcc: starting tmux: %w", err)
+		return nil, err
+	}
+	return StartSessionWithTransport(ctx, cfg, t)
+}
+
+// StartSessionWithTransport is the generic entry point: the caller
+// hands us a pre-connected Transport and we drive the tmux-CC protocol
+// on top. Use this for SSH-backed sessions (see EnsureRemoteSession).
+// The Session takes ownership of the Transport and will Close it when
+// the session terminates.
+func StartSessionWithTransport(ctx context.Context, cfg SessionConfig, t Transport) (*Session, error) {
+	if t == nil {
+		return nil, errors.New("tmuxcc: nil Transport")
+	}
+	if err := ctx.Err(); err != nil {
+		_ = t.Close()
+		return nil, err
 	}
 	s := &Session{
-		cfg:    cfg,
-		cmd:    cmd,
-		tty:    ptmx,
-		doneCh: make(chan struct{}),
+		cfg:       cfg,
+		transport: t,
+		doneCh:    make(chan struct{}),
 	}
 	go s.readLoop()
 	go s.waitLoop()
@@ -132,7 +143,7 @@ func (s *Session) readLoop() {
 	defer func() {
 		panichandler.PanicHandler("tmuxcc.Session.readLoop", recover())
 	}()
-	r := bufio.NewReaderSize(s.tty, 1<<16)
+	r := bufio.NewReaderSize(s.transport, 1<<16)
 	for {
 		line, err := r.ReadString('\n')
 		if len(line) > 0 {
@@ -259,9 +270,9 @@ func (s *Session) failPending(err error) {
 
 func (s *Session) waitLoop() {
 	defer func() { panichandler.PanicHandler("tmuxcc.Session.waitLoop", recover()) }()
-	err := s.cmd.Wait()
+	err := s.transport.Wait()
 	s.failPending(err)
-	_ = s.tty.Close()
+	_ = s.transport.Close()
 }
 
 // SendCommand writes cmd to tmux (a newline is appended) and blocks
@@ -279,7 +290,7 @@ func (s *Session) SendCommand(ctx context.Context, cmd string) ([]string, error)
 	s.pendingMu.Unlock()
 
 	s.stdinMu.Lock()
-	_, err := io.WriteString(s.tty, cmd+"\n")
+	_, err := io.WriteString(s.transport, cmd+"\n")
 	s.stdinMu.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("tmuxcc: writing command: %w", err)
@@ -309,32 +320,31 @@ func (s *Session) SendPaneInput(ctx context.Context, paneID string, data []byte)
 	return err
 }
 
-// Resize updates the pty size and sends refresh-client -C to tmux so
-// its client view matches. Per-pane resizes (if the waveterm layout
-// changes) are handled separately via resize-pane.
+// Resize updates the backing transport's size and sends
+// refresh-client -C to tmux so its client view matches. Per-pane
+// resizes (if the waveterm layout changes) are handled separately via
+// resize-pane.
 func (s *Session) Resize(ctx context.Context, rows, cols int) error {
 	if rows <= 0 || cols <= 0 {
 		return fmt.Errorf("tmuxcc: invalid size %dx%d", cols, rows)
 	}
-	if err := pty.Setsize(s.tty, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)}); err != nil {
-		return fmt.Errorf("tmuxcc: pty resize: %w", err)
+	if err := s.transport.SetSize(rows, cols); err != nil {
+		return fmt.Errorf("tmuxcc: transport resize: %w", err)
 	}
 	cmd := fmt.Sprintf("refresh-client -C %d,%d", cols, rows)
 	_, err := s.SendCommand(ctx, cmd)
 	return err
 }
 
-// Close terminates the tmux process and releases the pty. Safe to call
-// multiple times; later calls are no-ops.
+// Close terminates the tmux process and releases the transport. Safe
+// to call multiple times; later calls are no-ops.
 func (s *Session) Close() error {
 	select {
 	case <-s.doneCh:
 		return s.waitErr
 	default:
 	}
-	if s.cmd.Process != nil {
-		_ = s.cmd.Process.Kill()
-	}
+	_ = s.transport.Close()
 	<-s.doneCh
 	return s.waitErr
 }

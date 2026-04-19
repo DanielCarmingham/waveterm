@@ -6,11 +6,13 @@ package tmuxcc
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/wavetermdev/waveterm/pkg/panichandler"
+	"github.com/wavetermdev/waveterm/pkg/remote/conncontroller"
 )
 
 // Manager is a registry of active tmux-CC sessions keyed by an opaque
@@ -77,6 +79,15 @@ func (m *Manager) StartNamed(ctx context.Context, name string, cfg SessionConfig
 }
 
 func (m *Manager) startNamed(ctx context.Context, name string, cfg SessionConfig) (string, *Session, error) {
+	return m.startNamedUsing(ctx, name, cfg, func(wiredCfg SessionConfig) (*Session, error) {
+		return StartSession(ctx, wiredCfg)
+	})
+}
+
+// startNamedUsing is the shared registration + hook-wiring code used by
+// both local and transport-based session starts. starter is invoked
+// with an already-hooked SessionConfig to actually boot the Session.
+func (m *Manager) startNamedUsing(ctx context.Context, name string, cfg SessionConfig, starter func(SessionConfig) (*Session, error)) (string, *Session, error) {
 	handle := uuid.New().String()
 	slot := &sessionSlot{
 		handle: handle,
@@ -100,7 +111,7 @@ func (m *Manager) startNamed(ctx context.Context, name string, cfg SessionConfig
 			userOnExit(err)
 		}
 	}
-	s, err := StartSession(ctx, cfg)
+	s, err := starter(cfg)
 	if err != nil {
 		return "", nil, err
 	}
@@ -239,6 +250,62 @@ func (m *Manager) EnsureLocalSession(ctx context.Context, name string) (string, 
 		}
 	}()
 	return handle, sess, nil
+}
+
+// EnsureRemoteSession is the SSH counterpart to EnsureLocalSession: it
+// attaches to (or creates) a tmux -CC session on the remote host
+// referred to by conn. The handle is keyed globally by a
+// "<conn-name>/<session-name>" composite, so local and remote sessions
+// with the same short name don't collide.
+//
+// As with the local variant, window-size=manual is set after spawn so
+// explicit resize-window calls from waveterm actually propagate.
+func (m *Manager) EnsureRemoteSession(ctx context.Context, conn *conncontroller.SSHConn, sessionName string) (string, *Session, error) {
+	if conn == nil {
+		return "", nil, fmt.Errorf("tmuxcc: EnsureRemoteSession requires a non-nil conn")
+	}
+	if sessionName == "" {
+		return "", nil, fmt.Errorf("tmuxcc: EnsureRemoteSession requires a name")
+	}
+	key := conn.GetName() + "/" + sessionName
+	if h, sess := m.GetByName(key); sess != nil {
+		return h, sess, nil
+	}
+	// tmux -CC needs to run inside a shell on the remote side so that
+	// env (PATH, locale) is resolved. Using the login shell keeps this
+	// portable across remote shell choices.
+	//
+	// -A attaches if the named session exists, otherwise new-session.
+	cmdStr := fmt.Sprintf("tmux -CC new-session -A -s %s", shellQuote(sessionName))
+	cfg := SessionConfig{
+		Rows: defaultRows,
+		Cols: defaultCols,
+	}
+	handle, sess, err := m.startNamedUsing(ctx, key, cfg, func(wiredCfg SessionConfig) (*Session, error) {
+		t, err := startSSHTransport(ctx, conn, cmdStr, defaultRows, defaultCols)
+		if err != nil {
+			return nil, err
+		}
+		return StartSessionWithTransport(ctx, wiredCfg, t)
+	})
+	if err != nil {
+		return "", nil, err
+	}
+	go func() {
+		cmdCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := sess.SendCommand(cmdCtx, "set-option -t "+shellQuote(sessionName)+" window-size manual"); err != nil {
+			fmt.Printf("[tmuxcc] set window-size manual for %q: %v\n", key, err)
+		}
+	}()
+	return handle, sess, nil
+}
+
+// shellQuote wraps s in single quotes for safe inclusion as a single
+// tmux argument. Duplicated from the wshserver helper so tmuxcc stays
+// self-contained.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // Handles returns a snapshot of active handles.

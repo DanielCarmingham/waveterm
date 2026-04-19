@@ -1585,20 +1585,37 @@ func (ws *WshServer) TmuxDevConnectCommand(ctx context.Context, data wshrpc.Comm
 	if sessionName == "" {
 		sessionName = "waveterm-dev"
 	}
-	cfg := tmuxcc.SessionConfig{
-		Command: []string{"tmux", "-CC", "new-session", "-A", "-s", sessionName},
-		Rows:    data.Rows,
-		Cols:    data.Cols,
-		OnEvent: func(ev tmuxcc.Event) {
-			log.Printf("[tmuxcc:%s] %#v", sessionName, ev)
-		},
-		OnExit: func(err error) {
-			log.Printf("[tmuxcc:%s] session exited: %v", sessionName, err)
-		},
+	var handle string
+	var session *tmuxcc.Session
+	var err error
+	if data.ConnName != "" && !conncontroller.IsLocalConnName(data.ConnName) && !conncontroller.IsWslConnName(data.ConnName) {
+		opts, perr := remote.ParseOpts(data.ConnName)
+		if perr != nil {
+			return nil, fmt.Errorf("parse conn %q: %w", data.ConnName, perr)
+		}
+		conn := conncontroller.MaybeGetConn(opts)
+		if conn == nil {
+			return nil, fmt.Errorf("connection %q not established — connect first", data.ConnName)
+		}
+		if conn.DeriveConnStatus().Status != conncontroller.Status_Connected {
+			return nil, fmt.Errorf("connection %q not connected", data.ConnName)
+		}
+		handle, session, err = tmuxcc.GlobalManager().EnsureRemoteSession(ctx, conn, sessionName)
+	} else {
+		handle, session, err = tmuxcc.GlobalManager().EnsureLocalSession(ctx, sessionName)
 	}
-	handle, session, err := tmuxcc.GlobalManager().StartNamed(ctx, sessionName, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("tmux connect: %w", err)
+	}
+	// Attach a debug-logging subscriber for the life of the session.
+	// Dedup: if one is already registered for this handle we'd double-
+	// log, but since Ensure*Session returns the existing session on
+	// repeat calls, the wsh side will usually see "handle already
+	// known" and skip; only fresh sessions need logging anyway.
+	if _, subErr := tmuxcc.GlobalManager().Subscribe(handle, func(ev tmuxcc.Event) {
+		log.Printf("[tmuxcc:%s] %#v", sessionName, ev)
+	}); subErr != nil {
+		log.Printf("[tmuxcc] subscribe for debug log: %v", subErr)
 	}
 	// Query the initial pane id. tmux -CC can race briefly on startup
 	// (commands sent before tmux finishes its control-mode handshake

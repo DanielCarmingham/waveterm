@@ -930,11 +930,14 @@ type CommandRemoteProcessSignalData struct {
 	Signal string `json:"signal"`
 }
 
-// CommandTmuxDevConnectData spawns a local tmux -CC session for M0
-// smoke-testing. SessionName is passed to `tmux new-session -A -s`, so
-// reusing the same name reattaches rather than failing.
+// CommandTmuxDevConnectData spawns a tmux -CC session. SessionName is
+// passed to `tmux new-session -A -s`, so reusing the same name
+// reattaches rather than failing. ConnName, when non-empty and
+// non-local, routes the spawn through an SSH connection of that name
+// (the connection must already be established).
 type CommandTmuxDevConnectData struct {
 	SessionName string `json:"sessionname,omitempty"`
+	ConnName    string `json:"connname,omitempty"`
 	Rows        int    `json:"rows,omitempty"`
 	Cols        int    `json:"cols,omitempty"`
 }

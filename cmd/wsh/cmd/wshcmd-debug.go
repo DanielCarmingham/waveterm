@@ -58,7 +58,10 @@ var debugTmuxBlockCmd = &cobra.Command{
 	Hidden: true,
 }
 
+var debugTmuxBlockConn string
+
 func init() {
+	debugTmuxBlockCmd.Flags().StringVar(&debugTmuxBlockConn, "conn", "", "SSH connection name to spawn tmux -CC through (empty = local)")
 	debugCmd.AddCommand(debugBlockIdsCmd)
 	debugCmd.AddCommand(debugSendTelemetryCmd)
 	debugCmd.AddCommand(debugTmuxConnectCmd)
@@ -116,7 +119,10 @@ func debugTmuxBlockRun(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		sessionName = args[0]
 	}
-	connectData := wshrpc.CommandTmuxDevConnectData{SessionName: sessionName}
+	connectData := wshrpc.CommandTmuxDevConnectData{
+		SessionName: sessionName,
+		ConnName:    debugTmuxBlockConn,
+	}
 	resp, err := wshclient.TmuxDevConnectCommand(RpcClient, connectData, nil)
 	if err != nil {
 		return fmt.Errorf("tmux connect: %w", err)
@@ -130,6 +136,9 @@ func debugTmuxBlockRun(cmd *cobra.Command, args []string) error {
 		waveobj.MetaKey_TmuxSessionHandle: resp.Handle,
 		waveobj.MetaKey_TmuxSessionName:   sessionName,
 		waveobj.MetaKey_TmuxPaneId:        resp.PaneId,
+	}
+	if debugTmuxBlockConn != "" {
+		meta[waveobj.MetaKey_Connection] = debugTmuxBlockConn
 	}
 	createData := wshrpc.CommandCreateBlockData{
 		TabId:    tabId,
