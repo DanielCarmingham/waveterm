@@ -23,23 +23,28 @@ import (
 	"github.com/wavetermdev/waveterm/pkg/wshrpc"
 )
 
-// parseCursorPos parses the "y;x" output of tmux's
-// display-message '#{cursor_y};#{cursor_x}' query. Returns zero-based
-// row and column.
-func parseCursorPos(s string) (int, int, bool) {
-	semi := strings.IndexByte(s, ';')
-	if semi < 0 {
-		return 0, 0, false
+// parseCursorState parses the ";"-separated output of tmux's
+// display-message '#{cursor_y};#{cursor_x};#{pane_height}' query.
+// Returns (cursor_y, cursor_x, pane_height) — cursor coords zero-based
+// from top of the pane.
+func parseCursorState(s string) (int, int, int, bool) {
+	parts := strings.Split(strings.TrimSpace(s), ";")
+	if len(parts) < 3 {
+		return 0, 0, 0, false
 	}
-	y, err := strconv.Atoi(strings.TrimSpace(s[:semi]))
+	cy, err := strconv.Atoi(strings.TrimSpace(parts[0]))
 	if err != nil {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
-	x, err := strconv.Atoi(strings.TrimSpace(s[semi+1:]))
+	cx, err := strconv.Atoi(strings.TrimSpace(parts[1]))
 	if err != nil {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
-	return y, x, true
+	ph, err := strconv.Atoi(strings.TrimSpace(parts[2]))
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	return cy, cx, ph, true
 }
 
 // tmuxSendTimeout bounds each send-keys / resize-pane call. tmux
@@ -164,22 +169,27 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 	if err != nil {
 		log.Printf("[tmuxcc] block %s capture-pane: %v (continuing)", tc.BlockId, err)
 	} else if len(capLines) > 0 {
-		// Render every captured row — don't trim trailing blanks. tmux's
-		// cursor_y is relative to the pane, so keeping rendered height
-		// equal to the pane's row count is what lets the subsequent
-		// ESC[y+1;x+1H escape land on the right xterm row.
 		seed := strings.Join(capLines, "\r\n")
-		// Query tmux for the pane's current cursor position and emit an
-		// ANSI cursor-position escape so xterm's cursor lands where
-		// tmux says it is (right after the prompt, usually). Without
-		// this, xterm's cursor sits at the end of the captured text,
-		// which for a prompt line with trailing padding is wrong.
+		// Position the cursor using RELATIVE moves from the end of the
+		// seed. The last rendered line IS the pane's last visible row,
+		// so we move up (pane_height - 1 - cursor_y) rows from it to
+		// land on the real cursor row, then to absolute column
+		// cursor_x+1. Absolute ESC[y;xH positioning would be wrong
+		// when xterm's row count doesn't match the tmux pane's.
 		curCtx, cancelCur := context.WithTimeout(context.Background(), tmuxSendTimeout)
-		curLines, curErr := session.SendCommand(curCtx, fmt.Sprintf("display-message -p -t %s %s", paneID, strconv.Quote("#{cursor_y};#{cursor_x}")))
+		curLines, curErr := session.SendCommand(curCtx, fmt.Sprintf("display-message -p -t %s %s", paneID, strconv.Quote("#{cursor_y};#{cursor_x};#{pane_height}")))
 		cancelCur()
 		if curErr == nil && len(curLines) > 0 {
-			if y, x, ok := parseCursorPos(curLines[0]); ok {
-				seed += fmt.Sprintf("\x1b[%d;%dH", y+1, x+1)
+			if cy, cx, ph, ok := parseCursorState(curLines[0]); ok {
+				rowsUp := (ph - 1) - cy
+				if rowsUp < 0 {
+					rowsUp = 0
+				}
+				seed += "\r"
+				if rowsUp > 0 {
+					seed += fmt.Sprintf("\x1b[%dA", rowsUp)
+				}
+				seed += fmt.Sprintf("\x1b[%dG", cx+1)
 			} else {
 				log.Printf("[tmuxcc] block %s cursor parse failed: %q", tc.BlockId, curLines[0])
 			}
