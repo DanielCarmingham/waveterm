@@ -156,7 +156,10 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 		cancelResize()
 	}
 	capCtx, cancelCap := context.WithTimeout(context.Background(), tmuxSendTimeout)
-	capLines, err := session.SendCommand(capCtx, fmt.Sprintf("capture-pane -p -e -J -t %s", paneID))
+	// -S - pulls from the beginning of the scrollback history (default
+	// is the visible pane only). -J joins wrapped lines, -e preserves
+	// escape sequences, -p prints to stdout.
+	capLines, err := session.SendCommand(capCtx, fmt.Sprintf("capture-pane -p -e -J -S - -t %s", paneID))
 	cancelCap()
 	if err != nil {
 		log.Printf("[tmuxcc] block %s capture-pane: %v (continuing)", tc.BlockId, err)
