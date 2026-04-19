@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +21,25 @@ import (
 	"github.com/wavetermdev/waveterm/pkg/wps"
 	"github.com/wavetermdev/waveterm/pkg/wshrpc"
 )
+
+// parseCursorPos parses the "y;x" output of tmux's
+// display-message '#{cursor_y};#{cursor_x}' query. Returns zero-based
+// row and column.
+func parseCursorPos(s string) (int, int, bool) {
+	semi := strings.IndexByte(s, ';')
+	if semi < 0 {
+		return 0, 0, false
+	}
+	y, err := strconv.Atoi(strings.TrimSpace(s[:semi]))
+	if err != nil {
+		return 0, 0, false
+	}
+	x, err := strconv.Atoi(strings.TrimSpace(s[semi+1:]))
+	if err != nil {
+		return 0, 0, false
+	}
+	return y, x, true
+}
 
 // tmuxSendTimeout bounds each send-keys / resize-pane call. tmux
 // usually replies in milliseconds; anything longer means the session is
@@ -103,8 +123,28 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 	if err != nil {
 		log.Printf("[tmuxcc] block %s capture-pane: %v (continuing)", tc.BlockId, err)
 	} else if len(capLines) > 0 {
-		seed := []byte(strings.Join(capLines, "\r\n") + "\r\n")
-		if err := HandleAppendBlockFile(tc.BlockId, wavebase.BlockFile_Term, seed); err != nil {
+		// Trim trailing empty lines (unfilled pane rows) so xterm doesn't
+		// render blank lines below the prompt.
+		for len(capLines) > 0 && strings.TrimSpace(capLines[len(capLines)-1]) == "" {
+			capLines = capLines[:len(capLines)-1]
+		}
+		seed := strings.Join(capLines, "\r\n")
+		// Query tmux for the pane's current cursor position and emit an
+		// ANSI cursor-position escape so xterm's cursor lands where
+		// tmux says it is (right after the prompt, usually). Without
+		// this, xterm's cursor sits at the end of the captured text,
+		// which for a prompt line with trailing padding is wrong.
+		curCtx, cancelCur := context.WithTimeout(context.Background(), tmuxSendTimeout)
+		curLines, curErr := session.SendCommand(curCtx, fmt.Sprintf("display-message -p -t %s %s", paneID, strconv.Quote("#{cursor_y};#{cursor_x}")))
+		cancelCur()
+		if curErr == nil && len(curLines) > 0 {
+			if y, x, ok := parseCursorPos(curLines[0]); ok {
+				seed += fmt.Sprintf("\x1b[%d;%dH", y+1, x+1)
+			} else {
+				log.Printf("[tmuxcc] block %s cursor parse failed: %q", tc.BlockId, curLines[0])
+			}
+		}
+		if err := HandleAppendBlockFile(tc.BlockId, wavebase.BlockFile_Term, []byte(seed)); err != nil {
 			log.Printf("[tmuxcc] block %s seed append: %v (continuing)", tc.BlockId, err)
 		}
 	}
