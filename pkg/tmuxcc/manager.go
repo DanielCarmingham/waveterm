@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/wavetermdev/waveterm/pkg/panichandler"
@@ -206,6 +207,11 @@ func (m *Manager) Close(handle string) error {
 // Events are logged to stderr with an [tmuxcc:<name>] prefix so a
 // single subscriber style works for orchestrated + debug sessions
 // alike.
+//
+// Sets "window-size manual" on the session so explicit resize-pane
+// calls from waveterm take effect — tmux's default "latest" sizes
+// panes to the last-attached client, which silently ignores our
+// resize requests and causes xterm-vs-pane width mismatches.
 func (m *Manager) EnsureLocalSession(ctx context.Context, name string) (string, *Session, error) {
 	if name == "" {
 		return "", nil, fmt.Errorf("tmuxcc: EnsureLocalSession requires a name")
@@ -216,7 +222,23 @@ func (m *Manager) EnsureLocalSession(ctx context.Context, name string) (string, 
 	cfg := SessionConfig{
 		Command: []string{"tmux", "-CC", "new-session", "-A", "-s", name},
 	}
-	return m.StartNamed(ctx, name, cfg)
+	handle, sess, err := m.StartNamed(ctx, name, cfg)
+	if err != nil {
+		return "", nil, err
+	}
+	// Best-effort: tell tmux not to auto-resize the pane. Done in a
+	// goroutine so a slow/unresponsive tmux doesn't block session
+	// start, but log any error.
+	go func() {
+		cmdCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := sess.SendCommand(cmdCtx, "set-option -t "+name+" window-size manual"); err != nil {
+			// Non-fatal: older tmux versions or existing sessions may
+			// already have this set. Logged for diagnostic purposes.
+			fmt.Printf("[tmuxcc] set window-size manual for %q: %v\n", name, err)
+		}
+	}()
+	return handle, sess, nil
 }
 
 // Handles returns a snapshot of active handles.
