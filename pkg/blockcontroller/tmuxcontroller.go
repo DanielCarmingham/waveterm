@@ -134,6 +134,13 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 	if err := filestore.WFS.MakeFile(mkCtx, tc.BlockId, wavebase.BlockFile_Term, nil, wshrpc.FileOpts{MaxSize: DefaultTermMaxFileSize, Circular: true}); err != nil {
 		log.Printf("[tmuxcc] block %s make term file: %v (continuing)", tc.BlockId, err)
 	}
+	// On reconnect the term file already holds the previous session's
+	// scrollback. Truncate so the fresh capture-pane seed isn't
+	// appended to stale content — the broadcast tells the frontend to
+	// clear xterm before the new seed streams in.
+	if err := HandleTruncateBlockFile(tc.BlockId); err != nil {
+		log.Printf("[tmuxcc] block %s truncate term file: %v (continuing)", tc.BlockId, err)
+	}
 	// Order matters: resize → capture → subscribe. Resize first so the
 	// captured buffer reflects the block's actual dimensions. Capture
 	// before subscribe so we seed xterm with the pane's current visible
