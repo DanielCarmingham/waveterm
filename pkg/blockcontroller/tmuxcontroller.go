@@ -159,6 +159,9 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 		tc.Subscription = sub
 		tc.ProcStatus = Status_Running
 	})
+	if err := EnsureTmuxOrchestrator(handle, tc.TabId, paneID, tc.BlockId); err != nil {
+		log.Printf("[tmuxcc] block %s orchestrator register: %v (continuing)", tc.BlockId, err)
+	}
 	tc.sendUpdate()
 	return nil
 }
