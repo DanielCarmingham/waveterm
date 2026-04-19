@@ -1602,12 +1602,20 @@ func (ws *WshServer) TmuxDevConnectCommand(ctx context.Context, data wshrpc.Comm
 	}
 	paneID := ""
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	lines, qerr := session.SendCommand(queryCtx, fmt.Sprintf("display-message -p -t %s #{pane_id}", shellQuote(sessionName)))
+	// Quote #{pane_id} — tmux's command parser treats a bareword '#' as
+	// a comment, so an unquoted #{pane_id} is silently dropped and the
+	// default status-line format is returned instead.
+	lines, qerr := session.SendCommand(queryCtx, fmt.Sprintf("display-message -p -t %s %s", shellQuote(sessionName), shellQuote("#{pane_id}")))
 	cancel()
 	if qerr != nil {
 		log.Printf("[tmuxcc] display-message failed: %v", qerr)
 	} else if len(lines) > 0 {
-		paneID = strings.TrimSpace(lines[0])
+		candidate := strings.TrimSpace(lines[0])
+		if strings.HasPrefix(candidate, "%") {
+			paneID = candidate
+		} else {
+			log.Printf("[tmuxcc] display-message returned unexpected value %q (expected %%<id>)", candidate)
+		}
 	}
 	log.Printf("[tmuxcc] started session %q, handle=%s, pane=%s", sessionName, handle, paneID)
 	return &wshrpc.CommandTmuxDevConnectRtnData{Handle: handle, PaneId: paneID}, nil
