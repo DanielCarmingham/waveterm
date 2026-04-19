@@ -106,6 +106,43 @@ func TestParseLayoutThreePanesHorizontal(t *testing.T) {
 	}
 }
 
+func TestFindSplitInfoHorizontal(t *testing.T) {
+	t.Parallel()
+	n, _ := tmuxcc.ParseLayout("abcd,80x24,0,0{40x24,0,0,0,40x24,40,0,1}")
+	info, ok := n.FindSplitInfo("%1")
+	if !ok {
+		t.Fatalf("expected ok=true")
+	}
+	if info.Split != "h" || info.Anchor != "%0" || info.Position != "after" {
+		t.Fatalf("got %#v", info)
+	}
+}
+
+func TestFindSplitInfoVertical(t *testing.T) {
+	t.Parallel()
+	n, _ := tmuxcc.ParseLayout("abcd,80x24,0,0[80x12,0,0,0,80x12,0,12,1]")
+	info, ok := n.FindSplitInfo("%1")
+	if !ok {
+		t.Fatalf("expected ok=true")
+	}
+	if info.Split != "v" || info.Anchor != "%0" || info.Position != "after" {
+		t.Fatalf("got %#v", info)
+	}
+}
+
+func TestFindSplitInfoNestedVertical(t *testing.T) {
+	t.Parallel()
+	// outer h: %0 | (v: %1, %2)
+	n, _ := tmuxcc.ParseLayout("abcd,80x24,0,0{40x24,0,0,0,40x24,40,0[40x12,40,0,1,40x12,40,12,2]}")
+	info, ok := n.FindSplitInfo("%2")
+	if !ok {
+		t.Fatalf("expected ok=true")
+	}
+	if info.Split != "v" || info.Anchor != "%1" || info.Position != "after" {
+		t.Fatalf("got %#v", info)
+	}
+}
+
 func TestParseLayoutViaNotification(t *testing.T) {
 	t.Parallel()
 	ev, err := tmuxcc.ParseNotification("%layout-change @1 7e31,80x24,0,0{40x24,0,0,0,40x24,40,0,1} 7e31,80x24,0,0{40x24,0,0,0,40x24,40,0,1} 1")

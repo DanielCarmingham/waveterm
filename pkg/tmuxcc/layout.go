@@ -49,6 +49,77 @@ func (n *LayoutNode) walkPanes(out *[]string) {
 	}
 }
 
+// SplitInfo describes how a pane should be positioned relative to a
+// sibling when materialized as a waveterm block.
+type SplitInfo struct {
+	Split    string // "h" (left-right) or "v" (top-bottom)
+	Anchor   string // pane id of an adjacent sibling to split relative to
+	Position string // "before" or "after" (relative to anchor)
+}
+
+// FindSplitInfo locates paneID in the tree and returns how it relates
+// to its siblings. Returns ok=false if paneID is the root leaf (no
+// siblings) or is not found.
+func (n *LayoutNode) FindSplitInfo(paneID string) (SplitInfo, bool) {
+	return findSplitInfo(n, paneID)
+}
+
+func findSplitInfo(n *LayoutNode, paneID string) (SplitInfo, bool) {
+	if n == nil || n.IsLeaf() {
+		return SplitInfo{}, false
+	}
+	for i, c := range n.Children {
+		if c.IsLeaf() && c.PaneID == paneID {
+			info := SplitInfo{Split: n.Split}
+			if i > 0 {
+				info.Anchor = lastLeafPane(n.Children[i-1])
+				info.Position = "after"
+				return info, true
+			}
+			if len(n.Children) > 1 {
+				info.Anchor = firstLeafPane(n.Children[1])
+				info.Position = "before"
+				return info, true
+			}
+			return SplitInfo{}, false
+		}
+		if sub, ok := findSplitInfo(c, paneID); ok {
+			return sub, true
+		}
+	}
+	return SplitInfo{}, false
+}
+
+func firstLeafPane(n *LayoutNode) string {
+	if n == nil {
+		return ""
+	}
+	if n.IsLeaf() {
+		return n.PaneID
+	}
+	for _, c := range n.Children {
+		if p := firstLeafPane(c); p != "" {
+			return p
+		}
+	}
+	return ""
+}
+
+func lastLeafPane(n *LayoutNode) string {
+	if n == nil {
+		return ""
+	}
+	if n.IsLeaf() {
+		return n.PaneID
+	}
+	for i := len(n.Children) - 1; i >= 0; i-- {
+		if p := lastLeafPane(n.Children[i]); p != "" {
+			return p
+		}
+	}
+	return ""
+}
+
 // ParseLayout parses a tmux layout string like
 // "7e31,80x24,0,0{40x24,0,0,0,40x24,40,0,1}". The leading 4-char
 // checksum is discarded.

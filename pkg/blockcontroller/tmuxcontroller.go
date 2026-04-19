@@ -123,11 +123,10 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 	if err != nil {
 		log.Printf("[tmuxcc] block %s capture-pane: %v (continuing)", tc.BlockId, err)
 	} else if len(capLines) > 0 {
-		// Trim trailing empty lines (unfilled pane rows) so xterm doesn't
-		// render blank lines below the prompt.
-		for len(capLines) > 0 && strings.TrimSpace(capLines[len(capLines)-1]) == "" {
-			capLines = capLines[:len(capLines)-1]
-		}
+		// Render every captured row — don't trim trailing blanks. tmux's
+		// cursor_y is relative to the pane, so keeping rendered height
+		// equal to the pane's row count is what lets the subsequent
+		// ESC[y+1;x+1H escape land on the right xterm row.
 		seed := strings.Join(capLines, "\r\n")
 		// Query tmux for the pane's current cursor position and emit an
 		// ANSI cursor-position escape so xterm's cursor lands where

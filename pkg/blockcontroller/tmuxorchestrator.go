@@ -182,10 +182,10 @@ func (o *TmuxOrchestrator) onLayoutChange(windowID, layoutStr string) {
 	for _, p := range panes {
 		current[p] = true
 	}
-	var anchorBlockID string
+	var fallbackAnchor string
 	for p, bid := range o.paneBlocks {
 		if current[p] {
-			anchorBlockID = bid
+			fallbackAnchor = bid
 			break
 		}
 	}
@@ -201,10 +201,28 @@ func (o *TmuxOrchestrator) onLayoutChange(windowID, layoutStr string) {
 			gonePanes = append(gonePanes, p)
 		}
 	}
+	paneBlocksCopy := make(map[string]string, len(o.paneBlocks))
+	for p, b := range o.paneBlocks {
+		paneBlocksCopy[p] = b
+	}
 	o.mu.Unlock()
 
 	for _, newPane := range newPanes {
-		blockID, err := o.createBlockForPane(newPane, anchorBlockID)
+		anchorBlockID := fallbackAnchor
+		splitType := wcore.LayoutActionDataType_SplitHorizontal
+		position := "after"
+		if info, ok := tree.FindSplitInfo(newPane); ok {
+			if bid, found := paneBlocksCopy[info.Anchor]; found && bid != "" {
+				anchorBlockID = bid
+			}
+			if info.Split == "v" {
+				splitType = wcore.LayoutActionDataType_SplitVertical
+			}
+			if info.Position == "before" {
+				position = "before"
+			}
+		}
+		blockID, err := o.createBlockForPane(newPane, anchorBlockID, splitType, position)
 		if err != nil {
 			log.Printf("[tmuxorchestrator] create block for pane %s: %v", newPane, err)
 			continue
@@ -212,8 +230,9 @@ func (o *TmuxOrchestrator) onLayoutChange(windowID, layoutStr string) {
 		o.mu.Lock()
 		o.paneBlocks[newPane] = blockID
 		o.mu.Unlock()
-		if anchorBlockID == "" {
-			anchorBlockID = blockID
+		paneBlocksCopy[newPane] = blockID
+		if fallbackAnchor == "" {
+			fallbackAnchor = blockID
 		}
 	}
 	for _, gonePane := range gonePanes {
@@ -249,7 +268,7 @@ func (o *TmuxOrchestrator) onWindowClose(windowID string) {
 	}
 }
 
-func (o *TmuxOrchestrator) createBlockForPane(paneID, anchorBlockID string) (string, error) {
+func (o *TmuxOrchestrator) createBlockForPane(paneID, anchorBlockID, splitType, position string) (string, error) {
 	meta := waveobj.MetaMapType{
 		waveobj.MetaKey_View:              "term",
 		waveobj.MetaKey_Controller:        "tmux",
@@ -265,11 +284,17 @@ func (o *TmuxOrchestrator) createBlockForPane(paneID, anchorBlockID string) (str
 	}
 	var action waveobj.LayoutActionData
 	if anchorBlockID != "" {
+		if splitType == "" {
+			splitType = wcore.LayoutActionDataType_SplitHorizontal
+		}
+		if position == "" {
+			position = "after"
+		}
 		action = waveobj.LayoutActionData{
-			ActionType:    wcore.LayoutActionDataType_SplitHorizontal,
+			ActionType:    splitType,
 			BlockId:       blockData.OID,
 			TargetBlockId: anchorBlockID,
-			Position:      "after",
+			Position:      position,
 		}
 	} else {
 		action = waveobj.LayoutActionData{
