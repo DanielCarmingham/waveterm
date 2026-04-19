@@ -170,6 +170,13 @@ func (o *TmuxOrchestrator) onWindowRenamed(windowID, name string) {
 }
 
 func (o *TmuxOrchestrator) setBlockTitle(blockID, title string) error {
+	return SetTmuxBlockTitle(blockID, title)
+}
+
+// SetTmuxBlockTitle updates a block's frame:title meta and broadcasts
+// the change. Package-exported so TmuxController can set an initial
+// title from its own Start without going through the orchestrator.
+func SetTmuxBlockTitle(blockID, title string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	ctx = waveobj.ContextWithUpdates(ctx)

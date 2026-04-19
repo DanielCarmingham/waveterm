@@ -177,8 +177,31 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 	if err := EnsureTmuxOrchestrator(handle, sessionName, tc.TabId, paneID, tc.BlockId); err != nil {
 		log.Printf("[tmuxcc] block %s orchestrator register: %v (continuing)", tc.BlockId, err)
 	}
+	// Initial title from tmux window name — done best-effort so a
+	// slow/failing query doesn't block the Start path.
+	go tc.setInitialTitle(session, paneID)
 	tc.sendUpdate()
 	return nil
+}
+
+func (tc *TmuxController) setInitialTitle(session *tmuxcc.Session, paneID string) {
+	defer func() { panichandler.PanicHandler("tmuxcc.TmuxController.setInitialTitle", recover()) }()
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxSendTimeout)
+	defer cancel()
+	lines, err := session.SendCommand(ctx, fmt.Sprintf("display-message -p -t %s %s", paneID, strconv.Quote("#{window_name}")))
+	if err != nil {
+		return
+	}
+	if len(lines) == 0 {
+		return
+	}
+	title := strings.TrimSpace(lines[0])
+	if title == "" {
+		return
+	}
+	if err := SetTmuxBlockTitle(tc.BlockId, title); err != nil {
+		log.Printf("[tmuxcc] block %s set initial title: %v", tc.BlockId, err)
+	}
 }
 
 func (tc *TmuxController) Stop(graceful bool, newStatus string, destroy bool) {
