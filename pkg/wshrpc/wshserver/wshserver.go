@@ -1600,22 +1600,33 @@ func (ws *WshServer) TmuxDevConnectCommand(ctx context.Context, data wshrpc.Comm
 	if err != nil {
 		return nil, fmt.Errorf("tmux connect: %w", err)
 	}
+	// Query the initial pane id. tmux -CC can race briefly on startup
+	// (commands sent before tmux finishes its control-mode handshake
+	// may get an empty response), so retry a few times. Quote
+	// #{pane_id} — tmux treats bareword '#' as a comment, so an
+	// unquoted format is silently dropped.
 	paneID := ""
-	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	// Quote #{pane_id} — tmux's command parser treats a bareword '#' as
-	// a comment, so an unquoted #{pane_id} is silently dropped and the
-	// default status-line format is returned instead.
-	lines, qerr := session.SendCommand(queryCtx, fmt.Sprintf("display-message -p -t %s %s", shellQuote(sessionName), shellQuote("#{pane_id}")))
-	cancel()
-	if qerr != nil {
-		log.Printf("[tmuxcc] display-message failed: %v", qerr)
-	} else if len(lines) > 0 {
-		candidate := strings.TrimSpace(lines[0])
-		if strings.HasPrefix(candidate, "%") {
-			paneID = candidate
+	cmdStr := fmt.Sprintf("list-panes -t %s -F %s", shellQuote(sessionName), shellQuote("#{pane_id}"))
+	for attempt := 0; attempt < 5; attempt++ {
+		qctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		lines, qerr := session.SendCommand(qctx, cmdStr)
+		cancel()
+		if qerr != nil {
+			log.Printf("[tmuxcc] list-panes attempt %d: %v", attempt, qerr)
 		} else {
-			log.Printf("[tmuxcc] display-message returned unexpected value %q (expected %%<id>)", candidate)
+			for _, ln := range lines {
+				cand := strings.TrimSpace(ln)
+				if strings.HasPrefix(cand, "%") {
+					paneID = cand
+					break
+				}
+			}
+			if paneID != "" {
+				break
+			}
+			log.Printf("[tmuxcc] list-panes attempt %d returned %d line(s), no pane id; retrying", attempt, len(lines))
 		}
+		time.Sleep(150 * time.Millisecond)
 	}
 	log.Printf("[tmuxcc] started session %q, handle=%s, pane=%s", sessionName, handle, paneID)
 	return &wshrpc.CommandTmuxDevConnectRtnData{Handle: handle, PaneId: paneID}, nil
