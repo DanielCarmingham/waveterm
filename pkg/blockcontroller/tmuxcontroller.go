@@ -114,12 +114,12 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 	if session == nil {
 		return fmt.Errorf("no tmux session for block (handle=%q name=%q)", handle, sessionName)
 	}
-	// Verify the pane still exists on the tmux server. It may not if
-	// the block persisted to disk but its pane was killed (including
-	// the common case where the entire session died and a reconnect
-	// created a fresh one with different pane ids).
+	// Verify the pane still exists on the tmux server. list-panes with
+	// an explicit -t is reliable even during tmux -CC startup (unlike
+	// display-message, which can return status-line fallback data
+	// during the handshake race).
 	verifyCtx, cancelVerify := context.WithTimeout(context.Background(), tmuxSendTimeout)
-	_, verifyErr := session.SendCommand(verifyCtx, fmt.Sprintf("display-message -p -t %s %s", paneID, strconv.Quote("#{pane_id}")))
+	_, verifyErr := session.SendCommand(verifyCtx, fmt.Sprintf("list-panes -t %s", paneID))
 	cancelVerify()
 	if verifyErr != nil && strings.Contains(verifyErr.Error(), "can't find pane") {
 		tc.writeStalePaneMessage(paneID, sessionName)
