@@ -119,6 +119,36 @@ func (tc *TmuxController) WithLock(f func()) {
 	f()
 }
 
+// sizeTmuxForBlock tells tmux the new size for this block's pane. When
+// the window has sibling panes (orchestrator tracks >1 pane) we use
+// resize-pane so siblings expand/shrink to fit — dragging a split in
+// waveterm translates to exactly one pane changing, as the user
+// expects. For single-pane windows resize-pane is a no-op, so we use
+// resize-window to grow or shrink the whole window.
+func (tc *TmuxController) sizeTmuxForBlock(ctx context.Context, session *tmuxcc.Session, handle, paneID string, rows, cols int) error {
+	if rows <= 0 || cols <= 0 {
+		return nil
+	}
+	paneCount := PaneCountForHandle(handle)
+	var cmd string
+	if paneCount > 1 {
+		cmd = fmt.Sprintf("resize-pane -t %s -x %d -y %d", paneID, cols, rows)
+	} else {
+		cmd = fmt.Sprintf("resize-window -t %s -x %d -y %d", paneID, cols, rows)
+	}
+	if _, err := session.SendCommand(ctx, cmd); err != nil {
+		return fmt.Errorf("tmux %s: %w", cmdHead(cmd), err)
+	}
+	return nil
+}
+
+func cmdHead(cmd string) string {
+	if i := strings.IndexByte(cmd, ' '); i > 0 {
+		return cmd[:i]
+	}
+	return cmd
+}
+
 func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapType, rtOpts *waveobj.RuntimeOpts, force bool) error {
 	handle := blockMeta.GetString(waveobj.MetaKey_TmuxSessionHandle, "")
 	sessionName := blockMeta.GetString(waveobj.MetaKey_TmuxSessionName, "")
@@ -195,12 +225,8 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 	// will correct any drift.
 	if rtOpts != nil && rtOpts.TermSize.Rows > 0 && rtOpts.TermSize.Cols > 0 {
 		resizeCtx, cancelResize := context.WithTimeout(context.Background(), tmuxSendTimeout)
-		// resize-window sizes the entire window. resize-pane only
-		// shifts borders within a multi-pane layout and is silently
-		// ignored for single-pane windows.
-		resizeCmd := fmt.Sprintf("resize-window -t %s -x %d -y %d", paneID, rtOpts.TermSize.Cols, rtOpts.TermSize.Rows)
-		if _, err := session.SendCommand(resizeCtx, resizeCmd); err != nil {
-			log.Printf("[tmuxcc] block %s initial resize-window: %v (continuing)", tc.BlockId, err)
+		if err := tc.sizeTmuxForBlock(resizeCtx, session, handle, paneID, rtOpts.TermSize.Rows, rtOpts.TermSize.Cols); err != nil {
+			log.Printf("[tmuxcc] block %s initial resize: %v (continuing)", tc.BlockId, err)
 		}
 		cancelResize()
 	}
@@ -365,9 +391,11 @@ func (tc *TmuxController) GetConnName() string { return tc.ConnName }
 func (tc *TmuxController) SendInput(input *BlockInputUnion) error {
 	var session *tmuxcc.Session
 	var paneID string
+	var handle string
 	tc.WithLock(func() {
 		session = tc.Session
 		paneID = tc.PaneID
+		handle = tc.SessionHandle
 	})
 	if session == nil {
 		return fmt.Errorf("tmux controller not started")
@@ -380,9 +408,8 @@ func (tc *TmuxController) SendInput(input *BlockInputUnion) error {
 		}
 	}
 	if input.TermSize != nil && input.TermSize.Rows > 0 && input.TermSize.Cols > 0 {
-		cmd := fmt.Sprintf("resize-window -t %s -x %d -y %d", paneID, input.TermSize.Cols, input.TermSize.Rows)
-		if _, err := session.SendCommand(ctx, cmd); err != nil {
-			return fmt.Errorf("tmux resize-window: %w", err)
+		if err := tc.sizeTmuxForBlock(ctx, session, handle, paneID, input.TermSize.Rows, input.TermSize.Cols); err != nil {
+			return err
 		}
 	}
 	return nil

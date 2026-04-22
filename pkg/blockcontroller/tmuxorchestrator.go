@@ -111,6 +111,24 @@ func StartTmuxOrchestrator(handle string, sessionName string, tabID string, seed
 	return nil
 }
 
+// PaneCountForHandle returns the number of tmux panes the
+// orchestrator for handle is currently tracking (the pane count of
+// the mirrored window). Returns 0 if no orchestrator is registered
+// for the handle — callers can treat that as "unknown, pick a safe
+// default." After the first %layout-change, the count is authoritative
+// for the mirrored window.
+func PaneCountForHandle(handle string) int {
+	orchestratorMu.Lock()
+	o, ok := orchestrators[handle]
+	orchestratorMu.Unlock()
+	if !ok {
+		return 0
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return len(o.paneBlocks)
+}
+
 // ForgetOrchestratorPane removes a pane→block entry from the
 // orchestrator for handle, if any. Call this when a block is being
 // destroyed from the waveterm side so the orchestrator doesn't try to
