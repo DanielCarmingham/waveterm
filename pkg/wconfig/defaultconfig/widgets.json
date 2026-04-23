@@ -10,6 +10,18 @@
             }
         }
     },
+    "defwidget@tmux": {
+        "display:order": -4.5,
+        "icon": "window-restore",
+        "label": "tmux",
+        "blockdef": {
+            "meta": {
+                "view": "term",
+                "controller": "tmux",
+                "tmux:sessionname": "waveterm"
+            }
+        }
+    },
     "defwidget@files": {
         "display:order": -4,
         "icon": "folder",

@@ -21,9 +21,64 @@ import (
 	"github.com/wavetermdev/waveterm/pkg/utilds"
 	"github.com/wavetermdev/waveterm/pkg/wavebase"
 	"github.com/wavetermdev/waveterm/pkg/waveobj"
+	"github.com/wavetermdev/waveterm/pkg/wcore"
 	"github.com/wavetermdev/waveterm/pkg/wps"
 	"github.com/wavetermdev/waveterm/pkg/wshrpc"
+	"github.com/wavetermdev/waveterm/pkg/wstore"
 )
+
+// resolveFirstPane asks the tmux server for the first pane id in
+// sessionName. Used when a block was created with only a session name
+// (a widget click) — we pick the initial pane for the user. Retries a
+// few times to dodge the tmux -CC startup race that can return an
+// empty list mid-handshake.
+func resolveFirstPane(session *tmuxcc.Session, sessionName string) (string, error) {
+	cmdStr := fmt.Sprintf("list-panes -t %s -F %s", tmuxShellQuote(sessionName), tmuxShellQuote("#{pane_id}"))
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		qctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		lines, err := session.SendCommand(qctx, cmdStr)
+		cancel()
+		if err != nil {
+			lastErr = err
+		} else {
+			for _, ln := range lines {
+				if pid := strings.TrimSpace(ln); strings.HasPrefix(pid, "%") {
+					return pid, nil
+				}
+			}
+			lastErr = fmt.Errorf("no pane id in list-panes output (%d line(s))", len(lines))
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	return "", lastErr
+}
+
+// tmuxShellQuote wraps s in single quotes for tmux command arg safety.
+func tmuxShellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// persistTmuxBlockMeta writes resolved handle/pane back to block meta
+// so the next Start doesn't re-run the pane-discovery code path.
+// Best-effort; errors are logged and swallowed.
+func persistTmuxBlockMeta(blockID, handle, paneID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
+	defer cancel()
+	ctx = waveobj.ContextWithUpdates(ctx)
+	meta := waveobj.MetaMapType{
+		waveobj.MetaKey_TmuxSessionHandle: handle,
+		waveobj.MetaKey_TmuxPaneId:        paneID,
+	}
+	oref := waveobj.MakeORef(waveobj.OType_Block, blockID)
+	if err := wstore.UpdateObjectMeta(ctx, oref, meta, false); err != nil {
+		log.Printf("[tmuxcc] persist meta for block %s: %v", blockID, err)
+		return
+	}
+	wcore.SendWaveObjUpdate(oref)
+	updates := waveobj.ContextGetUpdatesRtn(ctx)
+	wps.Broker.SendUpdateEvents(updates)
+}
 
 // isRemoteConn returns true if connName refers to a non-local SSH
 // connection. Empty or "local*" means local.
@@ -154,8 +209,9 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 	sessionName := blockMeta.GetString(waveobj.MetaKey_TmuxSessionName, "")
 	connName := blockMeta.GetString(waveobj.MetaKey_Connection, "")
 	paneID := blockMeta.GetString(waveobj.MetaKey_TmuxPaneId, "")
-	if paneID == "" {
-		return fmt.Errorf("tmux block missing %q meta", waveobj.MetaKey_TmuxPaneId)
+	if paneID == "" && sessionName == "" {
+		return fmt.Errorf("tmux block needs either %q or %q in meta",
+			waveobj.MetaKey_TmuxPaneId, waveobj.MetaKey_TmuxSessionName)
 	}
 	var session *tmuxcc.Session
 	if handle != "" {
@@ -186,6 +242,18 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 		}
 		handle = newHandle
 		session = newSession
+	}
+	// When the block was created with just a session name (a freshly
+	// clicked tmux widget), resolve the first pane ID from tmux. Both
+	// for the runtime and as a sticky setting: persist it back to
+	// block meta so next Start skips the lookup.
+	if paneID == "" && session != nil && sessionName != "" {
+		resolvedPane, err := resolveFirstPane(session, sessionName)
+		if err != nil {
+			return fmt.Errorf("resolve first pane for session %q: %w", sessionName, err)
+		}
+		paneID = resolvedPane
+		go persistTmuxBlockMeta(tc.BlockId, handle, paneID)
 	}
 	if session == nil {
 		return fmt.Errorf("no tmux session for block (handle=%q name=%q)", handle, sessionName)
