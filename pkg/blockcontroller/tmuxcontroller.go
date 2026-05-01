@@ -27,31 +27,29 @@ import (
 	"github.com/wavetermdev/waveterm/pkg/wstore"
 )
 
-// resolveFirstPane asks the tmux server for the first pane id in
-// sessionName. Used when a block was created with only a session name
-// (a widget click) — we pick the initial pane for the user. Retries a
-// few times to dodge the tmux -CC startup race that can return an
-// empty list mid-handshake.
-func resolveFirstPane(session *tmuxcc.Session, sessionName string) (string, error) {
-	cmdStr := fmt.Sprintf("list-panes -t %s -F %s", tmuxShellQuote(sessionName), tmuxShellQuote("#{pane_id}"))
-	var lastErr error
-	for attempt := 0; attempt < 5; attempt++ {
-		qctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		lines, err := session.SendCommand(qctx, cmdStr)
-		cancel()
-		if err != nil {
-			lastErr = err
-		} else {
-			for _, ln := range lines {
-				if pid := strings.TrimSpace(ln); strings.HasPrefix(pid, "%") {
-					return pid, nil
-				}
-			}
-			lastErr = fmt.Errorf("no pane id in list-panes output (%d line(s))", len(lines))
-		}
-		time.Sleep(150 * time.Millisecond)
+// createNewWindowPane spawns a new tmux window in sessionName and
+// returns its (only) pane id. Used when a block is created with just a
+// session name (the tmux widget click) — each widget click owns the
+// pane it spawns, so closing the block can safely kill the pane
+// without disturbing other terminals already running in the session.
+//
+// Adopting a pre-existing pane (the earlier resolveFirstPane behavior)
+// was destructive: closing the block would kill someone else's running
+// shell. Always create our own.
+func createNewWindowPane(session *tmuxcc.Session, sessionName string) (string, error) {
+	cmdStr := fmt.Sprintf("new-window -t %s -P -F %s", tmuxShellQuote(sessionName), tmuxShellQuote("#{pane_id}"))
+	qctx, cancel := context.WithTimeout(context.Background(), tmuxSendTimeout)
+	defer cancel()
+	lines, err := session.SendCommand(qctx, cmdStr)
+	if err != nil {
+		return "", fmt.Errorf("new-window: %w", err)
 	}
-	return "", lastErr
+	for _, ln := range lines {
+		if pid := strings.TrimSpace(ln); strings.HasPrefix(pid, "%") {
+			return pid, nil
+		}
+	}
+	return "", fmt.Errorf("new-window: no pane id in output (%d line(s))", len(lines))
 }
 
 // tmuxShellQuote wraps s in single quotes for tmux command arg safety.
@@ -184,6 +182,9 @@ func (tc *TmuxController) sizeTmuxForBlock(ctx context.Context, session *tmuxcc.
 	if rows <= 0 || cols <= 0 {
 		return nil
 	}
+	if !isPaneDriver(handle, paneID, tc.BlockId) {
+		return nil
+	}
 	paneCount := PaneCountForHandle(handle)
 	var cmd string
 	if paneCount > 1 {
@@ -244,15 +245,18 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 		session = newSession
 	}
 	// When the block was created with just a session name (a freshly
-	// clicked tmux widget), resolve the first pane ID from tmux. Both
-	// for the runtime and as a sticky setting: persist it back to
-	// block meta so next Start skips the lookup.
+	// clicked tmux widget), spawn a new tmux window and bind to its
+	// pane. Each widget click owns the pane it creates so subsequent
+	// block-destroy can kill-pane without taking down unrelated
+	// terminals running in the same session. The new pane id is
+	// persisted back to block meta so a wavesrv restart re-attaches
+	// instead of spawning yet another window.
 	if paneID == "" && session != nil && sessionName != "" {
-		resolvedPane, err := resolveFirstPane(session, sessionName)
+		newPane, err := createNewWindowPane(session, sessionName)
 		if err != nil {
-			return fmt.Errorf("resolve first pane for session %q: %w", sessionName, err)
+			return fmt.Errorf("create new tmux window for session %q: %w", sessionName, err)
 		}
-		paneID = resolvedPane
+		paneID = newPane
 		go persistTmuxBlockMeta(tc.BlockId, handle, paneID)
 	}
 	if session == nil {
@@ -273,6 +277,11 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 		tc.sendUpdate()
 		return nil
 	}
+	// Register as a viewer of this pane before any resize call so
+	// driver election picks the right block. First-registered wins; a
+	// later block opening the same pane will be a non-driver and skip
+	// resize-pane.
+	registerPaneViewer(handle, paneID, tc.BlockId)
 	mkCtx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
 	defer cancel()
 	if err := filestore.WFS.MakeFile(mkCtx, tc.BlockId, wavebase.BlockFile_Term, nil, wshrpc.FileOpts{MaxSize: DefaultTermMaxFileSize, Circular: true}); err != nil {
@@ -419,6 +428,9 @@ func (tc *TmuxController) Stop(graceful bool, newStatus string, destroy bool) {
 	})
 	if sub != nil {
 		sub.Unsubscribe()
+	}
+	if handle != "" && paneID != "" {
+		unregisterPaneViewer(handle, paneID, tc.BlockId)
 	}
 	// On destroy, propagate the block close to tmux so the pane
 	// disappears too. Also drop the pane from the orchestrator's map
