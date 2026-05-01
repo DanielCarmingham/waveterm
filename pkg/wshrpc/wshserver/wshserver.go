@@ -14,6 +14,7 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -1659,4 +1660,34 @@ func shellQuote(s string) string {
 
 func (ws *WshServer) TmuxDevCloseCommand(ctx context.Context, handle string) error {
 	return tmuxcc.GlobalManager().Close(handle)
+}
+
+// TmuxListSessionsCommand returns the list of tmux session names
+// available on the local server. Used by the tmux widget's session
+// picker so users can attach to an existing session or pick a new
+// name.
+func (ws *WshServer) TmuxListSessionsCommand(ctx context.Context, data wshrpc.CommandTmuxListSessionsData) (*wshrpc.CommandTmuxListSessionsRtnData, error) {
+	if data.ConnName != "" {
+		return nil, fmt.Errorf("remote tmux session listing not yet implemented")
+	}
+	cmd := exec.CommandContext(ctx, "tmux", "list-sessions", "-F", "#{session_name}")
+	out, err := cmd.Output()
+	if err != nil {
+		// `tmux list-sessions` exits non-zero when the server isn't
+		// running. That's not an error from the user's perspective —
+		// it just means there are no sessions yet.
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return &wshrpc.CommandTmuxListSessionsRtnData{Sessions: []string{}}, nil
+		}
+		return nil, fmt.Errorf("tmux list-sessions: %w", err)
+	}
+	var sessions []string
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		name := strings.TrimSpace(line)
+		if name != "" {
+			sessions = append(sessions, name)
+		}
+	}
+	return &wshrpc.CommandTmuxListSessionsRtnData{Sessions: sessions}, nil
 }

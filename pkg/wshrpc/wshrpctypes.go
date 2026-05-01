@@ -215,6 +215,7 @@ type WshRpcInterface interface {
 	// tmux control-mode (M0: dev smoke-test surface, not yet user-facing)
 	TmuxDevConnectCommand(ctx context.Context, data CommandTmuxDevConnectData) (*CommandTmuxDevConnectRtnData, error)
 	TmuxDevCloseCommand(ctx context.Context, handle string) error
+	TmuxListSessionsCommand(ctx context.Context, data CommandTmuxListSessionsData) (*CommandTmuxListSessionsRtnData, error)
 }
 
 // for frontend
@@ -945,4 +946,15 @@ type CommandTmuxDevConnectData struct {
 type CommandTmuxDevConnectRtnData struct {
 	Handle string `json:"handle"`
 	PaneId string `json:"paneid,omitempty"`
+}
+
+// CommandTmuxListSessionsData asks for the list of tmux sessions
+// available to the user. With ConnName empty, the local tmux server is
+// queried. (Remote/SSH listing is a future enhancement.)
+type CommandTmuxListSessionsData struct {
+	ConnName string `json:"connname,omitempty"`
+}
+
+type CommandTmuxListSessionsRtnData struct {
+	Sessions []string `json:"sessions"`
 }

@@ -8,6 +8,7 @@ import { UpgradeOnboardingPatch } from "@/app/onboarding/onboarding-upgrade-patc
 import { DeleteFileModal, PublishAppModal, RenameFileModal } from "@/builder/builder-apppanel";
 import { SetSecretDialog } from "@/builder/tabs/builder-secrettab";
 import { AboutModal } from "./about";
+import { TmuxSessionPicker } from "./tmuxsessionpicker";
 import { UserInputModal } from "./userinputmodal";
 
 const modalRegistry: { [key: string]: React.ComponentType<any> } = {
@@ -21,6 +22,7 @@ const modalRegistry: { [key: string]: React.ComponentType<any> } = {
     [RenameFileModal.displayName || "RenameFileModal"]: RenameFileModal,
     [DeleteFileModal.displayName || "DeleteFileModal"]: DeleteFileModal,
     [SetSecretDialog.displayName || "SetSecretDialog"]: SetSecretDialog,
+    [TmuxSessionPicker.displayName || "TmuxSessionPicker"]: TmuxSessionPicker,
 };
 
 export const getModalComponent = (key: string): React.ComponentType<any> | undefined => {

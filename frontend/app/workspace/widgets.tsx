@@ -57,6 +57,25 @@ type WidgetPropsType = {
 
 async function handleWidgetSelect(widget: WidgetConfigType, env: WidgetsEnv) {
     const blockDef = widget.blockdef;
+    if (blockDef?.meta?.controller === "tmux") {
+        const defaultSession = (blockDef.meta?.["tmux:sessionname"] as string) || "waveterm";
+        modalsModel.pushModal("TmuxSessionPicker", {
+            defaultSession,
+            onSelect: (sessionName: string) => {
+                const newDef: BlockDef = {
+                    ...blockDef,
+                    meta: {
+                        ...blockDef.meta,
+                        "tmux:sessionname": sessionName,
+                        "tmux:paneid": null,
+                        "tmux:sessionhandle": null,
+                    },
+                };
+                env.createBlock(newDef, widget.magnified);
+            },
+        });
+        return;
+    }
     env.createBlock(blockDef, widget.magnified);
 }
 

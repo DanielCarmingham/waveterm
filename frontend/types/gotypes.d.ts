@@ -719,6 +719,16 @@ declare global {
         paneid?: string;
     };
 
+    // wshrpc.CommandTmuxListSessionsData
+    type CommandTmuxListSessionsData = {
+        connname?: string;
+    };
+
+    // wshrpc.CommandTmuxListSessionsRtnData
+    type CommandTmuxListSessionsRtnData = {
+        sessions: string[];
+    };
+
     // wshrpc.CommandVarData
     type CommandVarData = {
         key: string;

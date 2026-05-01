@@ -954,6 +954,12 @@ export class RpcApiType {
         return client.wshRpcCall("tmuxdevconnect", data, opts);
     }
 
+    // command "tmuxlistsessions" [call]
+    TmuxListSessionsCommand(client: WshClient, data: CommandTmuxListSessionsData, opts?: RpcOpts): Promise<CommandTmuxListSessionsRtnData> {
+        if (this.mockClient) return this.mockClient.mockWshRpcCall(client, "tmuxlistsessions", data, opts);
+        return client.wshRpcCall("tmuxlistsessions", data, opts);
+    }
+
     // command "updatetabname" [call]
     UpdateTabNameCommand(client: WshClient, arg1: string, arg2: string, opts?: RpcOpts): Promise<void> {
         if (this.mockClient) return this.mockClient.mockWshRpcCall(client, "updatetabname", { args: [arg1, arg2] }, opts);

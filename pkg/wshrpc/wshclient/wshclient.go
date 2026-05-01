@@ -948,6 +948,12 @@ func TmuxDevConnectCommand(w *wshutil.WshRpc, data wshrpc.CommandTmuxDevConnectD
 	return resp, err
 }
 
+// command "tmuxlistsessions", wshserver.TmuxListSessionsCommand
+func TmuxListSessionsCommand(w *wshutil.WshRpc, data wshrpc.CommandTmuxListSessionsData, opts *wshrpc.RpcOpts) (*wshrpc.CommandTmuxListSessionsRtnData, error) {
+	resp, err := sendRpcRequestCallHelper[*wshrpc.CommandTmuxListSessionsRtnData](w, "tmuxlistsessions", data, opts)
+	return resp, err
+}
+
 // command "updatetabname", wshserver.UpdateTabNameCommand
 func UpdateTabNameCommand(w *wshutil.WshRpc, arg1 string, arg2 string, opts *wshrpc.RpcOpts) error {
 	_, err := sendRpcRequestCallHelper[any](w, "updatetabname", wshrpc.MultiArg{Args: []any{arg1, arg2}}, opts)
