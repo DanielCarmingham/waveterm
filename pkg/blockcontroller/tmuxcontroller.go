@@ -153,6 +153,9 @@ type TmuxController struct {
 	Session       *tmuxcc.Session
 	PaneID        string
 	Subscription  *tmuxcc.Subscription
+
+	LastPaneRows int
+	LastPaneCols int
 }
 
 func MakeTmuxController(tabId string, blockId string, connName string) Controller {
@@ -282,6 +285,12 @@ func (tc *TmuxController) Start(ctx context.Context, blockMeta waveobj.MetaMapTy
 	// later block opening the same pane will be a non-driver and skip
 	// resize-pane.
 	registerPaneViewer(handle, paneID, tc.BlockId)
+	// Seed the pane-size meta from the current tmux state so the
+	// frontend has a value to compare against before any
+	// %layout-change event arrives. tmux fires layout-change only on
+	// actual changes — for idle panes we'd otherwise see undefined
+	// pane size.
+	go tc.publishInitialPaneSize(session, paneID)
 	mkCtx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
 	defer cancel()
 	if err := filestore.WFS.MakeFile(mkCtx, tc.BlockId, wavebase.BlockFile_Term, nil, wshrpc.FileOpts{MaxSize: DefaultTermMaxFileSize, Circular: true}); err != nil {
@@ -513,9 +522,108 @@ func (tc *TmuxController) handleEvent(ev tmuxcc.Event) {
 		if err := HandleAppendBlockFile(tc.BlockId, wavebase.BlockFile_Term, v.Data); err != nil {
 			log.Printf("[tmuxcc] block %s append error: %v", tc.BlockId, err)
 		}
+	case tmuxcc.EventLayoutChange:
+		tc.handleLayoutChange(paneID, v.Layout)
 	case tmuxcc.EventExit:
 		tc.markDone()
 	}
+}
+
+// publishInitialPaneSize queries tmux for our pane's current
+// dimensions and persists them to block meta. Called from Start so the
+// frontend's crosshatch overlay has a value to render against even
+// when %layout-change won't fire for our idle pane.
+func (tc *TmuxController) publishInitialPaneSize(session *tmuxcc.Session, paneID string) {
+	defer func() { panichandler.PanicHandler("tmuxcc.publishInitialPaneSize", recover()) }()
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxSendTimeout)
+	defer cancel()
+	lines, err := session.SendCommand(ctx, fmt.Sprintf("list-panes -t %s -F %s", paneID, strconv.Quote("#{pane_height} #{pane_width}")))
+	if err != nil || len(lines) == 0 {
+		return
+	}
+	var rows, cols int
+	if _, err := fmt.Sscanf(strings.TrimSpace(lines[0]), "%d %d", &rows, &cols); err != nil {
+		return
+	}
+	if rows <= 0 || cols <= 0 {
+		return
+	}
+	var changed bool
+	tc.WithLock(func() {
+		if tc.LastPaneRows != rows || tc.LastPaneCols != cols {
+			tc.LastPaneRows = rows
+			tc.LastPaneCols = cols
+			changed = true
+		}
+	})
+	if !changed {
+		return
+	}
+	persistCtx, persistCancel := context.WithTimeout(context.Background(), DefaultTimeout)
+	defer persistCancel()
+	persistCtx = waveobj.ContextWithUpdates(persistCtx)
+	oref := waveobj.MakeORef(waveobj.OType_Block, tc.BlockId)
+	meta := waveobj.MetaMapType{
+		waveobj.MetaKey_TmuxPaneRows: rows,
+		waveobj.MetaKey_TmuxPaneCols: cols,
+	}
+	if err := wstore.UpdateObjectMeta(persistCtx, oref, meta, false); err != nil {
+		log.Printf("[tmuxcc] block %s persist initial pane size: %v", tc.BlockId, err)
+		return
+	}
+	wcore.SendWaveObjUpdate(oref)
+	updates := waveobj.ContextGetUpdatesRtn(persistCtx)
+	wps.Broker.SendUpdateEvents(updates)
+}
+
+// handleLayoutChange parses the tmux layout string for our pane's
+// current size and persists it to block meta as tmux:panerows /
+// tmux:panecols. The frontend uses these to render a crosshatch
+// overlay when our xterm dimensions exceed the actual pane size
+// (which happens to non-driver blocks viewing a shared pane).
+func (tc *TmuxController) handleLayoutChange(paneID, layoutStr string) {
+	if paneID == "" {
+		return
+	}
+	tree, err := tmuxcc.ParseLayout(layoutStr)
+	if err != nil {
+		return
+	}
+	leaf := tree.FindPane(paneID)
+	if leaf == nil {
+		return
+	}
+	rows := leaf.Height
+	cols := leaf.Width
+	var changed bool
+	tc.WithLock(func() {
+		if tc.LastPaneRows != rows || tc.LastPaneCols != cols {
+			tc.LastPaneRows = rows
+			tc.LastPaneCols = cols
+			changed = true
+		}
+	})
+	if !changed {
+		return
+	}
+	go func() {
+		defer func() { panichandler.PanicHandler("tmuxcc.handleLayoutChange", recover()) }()
+		ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
+		defer cancel()
+		ctx = waveobj.ContextWithUpdates(ctx)
+		oref := waveobj.MakeORef(waveobj.OType_Block, tc.BlockId)
+		meta := waveobj.MetaMapType{
+			waveobj.MetaKey_TmuxPaneRows: rows,
+			waveobj.MetaKey_TmuxPaneCols: cols,
+		}
+		if err := wstore.UpdateObjectMeta(ctx, oref, meta, false); err != nil {
+			log.Printf("[tmuxcc] block %s persist pane size: %v", tc.BlockId, err)
+			return
+		}
+		wcore.SendWaveObjUpdate(oref)
+		updates := waveobj.ContextGetUpdatesRtn(ctx)
+		wps.Broker.SendUpdateEvents(updates)
+	}()
 }
 
 func (tc *TmuxController) markDone() {

@@ -1213,6 +1213,8 @@ declare global {
         "tmux:sessionhandle"?: string;
         "tmux:sessionname"?: string;
         "tmux:paneid"?: string;
+        "tmux:panerows"?: number;
+        "tmux:panecols"?: number;
         "tsunami:*"?: boolean;
         "tsunami:sdkreplacepath"?: string;
         "tsunami:apppath"?: string;

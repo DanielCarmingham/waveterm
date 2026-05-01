@@ -49,6 +49,25 @@ func (n *LayoutNode) walkPanes(out *[]string) {
 	}
 }
 
+// FindPane returns the leaf node for paneID, or nil if not found.
+func (n *LayoutNode) FindPane(paneID string) *LayoutNode {
+	if n == nil {
+		return nil
+	}
+	if n.IsLeaf() {
+		if n.PaneID == paneID {
+			return n
+		}
+		return nil
+	}
+	for _, c := range n.Children {
+		if found := c.FindPane(paneID); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
 // SplitInfo describes how a pane should be positioned relative to a
 // sibling when materialized as a waveterm block.
 type SplitInfo struct {

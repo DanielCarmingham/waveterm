@@ -145,6 +145,8 @@ type MetaTSType struct {
 	TmuxSessionHandle string `json:"tmux:sessionhandle,omitempty"`
 	TmuxSessionName   string `json:"tmux:sessionname,omitempty"`
 	TmuxPaneId        string `json:"tmux:paneid,omitempty"`
+	TmuxPaneRows      int    `json:"tmux:panerows,omitempty"`
+	TmuxPaneCols      int    `json:"tmux:panecols,omitempty"`
 
 	TsunamiClear          bool              `json:"tsunami:*,omitempty"`
 	TsunamiSdkReplacePath string            `json:"tsunami:sdkreplacepath,omitempty"`

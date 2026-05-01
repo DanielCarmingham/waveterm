@@ -141,6 +141,8 @@ const (
 	MetaKey_TmuxSessionHandle                = "tmux:sessionhandle"
 	MetaKey_TmuxSessionName                  = "tmux:sessionname"
 	MetaKey_TmuxPaneId                       = "tmux:paneid"
+	MetaKey_TmuxPaneRows                     = "tmux:panerows"
+	MetaKey_TmuxPaneCols                     = "tmux:panecols"
 
 	MetaKey_TsunamiClear                     = "tsunami:*"
 	MetaKey_TsunamiSdkReplacePath            = "tsunami:sdkreplacepath"

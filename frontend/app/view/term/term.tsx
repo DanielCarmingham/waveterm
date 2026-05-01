@@ -178,10 +178,70 @@ const TermToolbarVDomNode = ({ blockId, model }: TerminalViewProps) => {
     );
 };
 
+const TmuxCrosshatchOverlay = ({
+    xtermRows,
+    xtermCols,
+    paneRows,
+    paneCols,
+}: {
+    xtermRows: number;
+    xtermCols: number;
+    paneRows: number;
+    paneCols: number;
+}) => {
+    if (xtermRows <= 0 || xtermCols <= 0) return null;
+    if (paneRows <= 0 || paneCols <= 0) return null;
+    const showRight = paneCols < xtermCols;
+    const showBottom = paneRows < xtermRows;
+    if (!showRight && !showBottom) return null;
+    const rightLeft = `${(paneCols / xtermCols) * 100}%`;
+    const bottomTop = `${(paneRows / xtermRows) * 100}%`;
+    const inset = 3;
+    const stripeStyle: React.CSSProperties = {
+        backgroundImage: [
+            "repeating-linear-gradient(45deg, transparent 0 10px, rgba(255,255,255,0.22) 10px 12px)",
+            "repeating-linear-gradient(-45deg, transparent 0 11px, rgba(255,255,255,0.22) 11px 12px)",
+        ].join(","),
+        backgroundColor: "rgba(0,0,0,0.4)",
+        zIndex: 20,
+    };
+    return (
+        <>
+            {showRight && (
+                <div
+                    key="cross-right"
+                    className="absolute pointer-events-none"
+                    style={{
+                        top: inset,
+                        bottom: showBottom ? bottomTop : inset,
+                        left: rightLeft,
+                        right: inset,
+                        ...stripeStyle,
+                    }}
+                />
+            )}
+            {showBottom && (
+                <div
+                    key="cross-bottom"
+                    className="absolute pointer-events-none"
+                    style={{
+                        top: bottomTop,
+                        bottom: inset,
+                        left: inset,
+                        right: inset,
+                        ...stripeStyle,
+                    }}
+                />
+            )}
+        </>
+    );
+};
+
 const TerminalView = ({ blockId, model }: ViewComponentProps<TermViewModel>) => {
     const viewRef = React.useRef<HTMLDivElement>(null);
     const connectElemRef = React.useRef<HTMLDivElement>(null);
     const [termWrapInst, setTermWrapInst] = React.useState<TermWrap | null>(null);
+    const [xtermSize, setXtermSize] = React.useState<{ rows: number; cols: number }>({ rows: 0, cols: 0 });
     const [blockData] = WOS.useWaveObjectValue<Block>(WOS.makeORef("block", blockId));
     const termSettingsAtom = getSettingsPrefixAtom("term");
     const termSettings = jotai.useAtomValue(termSettingsAtom);
@@ -331,6 +391,10 @@ const TerminalView = ({ blockId, model }: ViewComponentProps<TermViewModel>) => 
             globalStore.set(searchProps.resultsIndex, results.resultIndex);
             globalStore.set(searchProps.resultsCount, results.resultCount);
         };
+        termWrap.onSizeChange = (rows, cols) => setXtermSize({ rows, cols });
+        if (termWrap.terminal.rows > 0 && termWrap.terminal.cols > 0) {
+            setXtermSize({ rows: termWrap.terminal.rows, cols: termWrap.terminal.cols });
+        }
         fireAndForget(termWrap.initTerminal.bind(termWrap));
         if (wasFocused) {
             setTimeout(() => {
@@ -393,6 +457,14 @@ const TerminalView = ({ blockId, model }: ViewComponentProps<TermViewModel>) => 
             <TermToolbarVDomNode key="vdom-toolbar" blockId={blockId} model={model} />
             <TermVDomNode key="vdom" blockId={blockId} model={model} />
             <div key="connect-elem" className="term-connectelem" ref={connectElemRef} />
+            {blockData?.meta?.controller === "tmux" && (
+                <TmuxCrosshatchOverlay
+                    xtermRows={xtermSize.rows}
+                    xtermCols={xtermSize.cols}
+                    paneRows={blockData?.meta?.["tmux:panerows"] ?? 0}
+                    paneCols={blockData?.meta?.["tmux:panecols"] ?? 0}
+                />
+            )}
             <NullErrorBoundary debugName="TermLinkTooltip">
                 <TermLinkTooltip termWrap={termWrapInst} />
             </NullErrorBoundary>
