@@ -19,7 +19,7 @@ export const TmuxSessionPicker = (props: TmuxSessionPickerProps) => {
     const { defaultSession = "waveterm", onSelect } = props;
     const [sessions, setSessions] = useState<string[]>([]);
     const [loading, setLoading] = useState(true);
-    const [text, setText] = useState(defaultSession);
+    const [text, setText] = useState("");
     const [selectedIdx, setSelectedIdx] = useState(0);
     const inputRef = useRef<HTMLInputElement>(null);
 
@@ -28,7 +28,10 @@ export const TmuxSessionPicker = (props: TmuxSessionPickerProps) => {
         fireAndForget(async () => {
             try {
                 const resp = await RpcApi.TmuxListSessionsCommand(TabRpcClient, {});
-                setSessions(resp?.sessions ?? []);
+                const list = (resp?.sessions ?? []).slice().sort((a, b) => a.localeCompare(b));
+                setSessions(list);
+                const defaultIdx = list.indexOf(defaultSession);
+                if (defaultIdx >= 0) setSelectedIdx(defaultIdx);
             } catch (e) {
                 console.warn("tmux list-sessions failed", e);
                 setSessions([]);
@@ -36,11 +39,10 @@ export const TmuxSessionPicker = (props: TmuxSessionPickerProps) => {
                 setLoading(false);
             }
         });
-    }, []);
+    }, [defaultSession]);
 
     useEffect(() => {
         inputRef.current?.focus();
-        inputRef.current?.select();
     }, []);
 
     const filtered = useMemo(() => {
@@ -49,7 +51,7 @@ export const TmuxSessionPicker = (props: TmuxSessionPickerProps) => {
         return sessions.filter((s) => s.toLowerCase().includes(q));
     }, [sessions, text]);
 
-    const isExisting = filtered.includes(text.trim());
+    const isExisting = sessions.includes(text.trim());
 
     const cancel = useCallback(() => {
         modalsModel.popModal();
@@ -105,7 +107,7 @@ export const TmuxSessionPicker = (props: TmuxSessionPickerProps) => {
                         setSelectedIdx(0);
                     }}
                     onKeyDown={handleKeyDown}
-                    placeholder="Session name"
+                    placeholder={`Type to filter or create — default: ${defaultSession}`}
                     className="bg-panelbg border border-border rounded px-2 py-1.5 text-sm focus:outline-none focus:border-accent"
                 />
                 <div className="flex flex-col max-h-72 overflow-y-auto -mx-1">
