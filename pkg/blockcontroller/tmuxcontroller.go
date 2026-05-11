@@ -525,8 +525,48 @@ func (tc *TmuxController) handleEvent(ev tmuxcc.Event) {
 	case tmuxcc.EventLayoutChange:
 		tc.handleLayoutChange(paneID, v.Layout)
 	case tmuxcc.EventExit:
-		tc.markDone()
+		tc.handleExit(v.Reason)
 	}
+}
+
+// handleExit is called when tmux sends %exit (server killed, session
+// destroyed, client detached). Surfaces a visible banner in the block,
+// clears the stale pane id from meta so a subsequent restart spawns a
+// fresh window pane via the session-name path, and marks the controller
+// done so the header refresh-button appears.
+func (tc *TmuxController) handleExit(reason string) {
+	msg := "tmux session ended"
+	if r := strings.TrimSpace(reason); r != "" {
+		msg = fmt.Sprintf("tmux session ended: %s", r)
+	}
+	banner := fmt.Sprintf("\r\n\x1b[33m[%s — click the refresh icon to reconnect]\x1b[0m\r\n", msg)
+	if err := HandleAppendBlockFile(tc.BlockId, wavebase.BlockFile_Term, []byte(banner)); err != nil {
+		log.Printf("[tmuxcc] block %s exit banner: %v", tc.BlockId, err)
+	}
+	tc.clearStalePaneMeta()
+	tc.markDone()
+}
+
+// clearStalePaneMeta wipes the tmux:paneid value from block meta. After
+// %exit the recorded pane id is no longer valid; clearing it forces the
+// next Start to create a new window pane via the session-name branch
+// instead of running the stale-pane verification path.
+func (tc *TmuxController) clearStalePaneMeta() {
+	defer func() { panichandler.PanicHandler("tmuxcc.clearStalePaneMeta", recover()) }()
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
+	defer cancel()
+	ctx = waveobj.ContextWithUpdates(ctx)
+	oref := waveobj.MakeORef(waveobj.OType_Block, tc.BlockId)
+	meta := waveobj.MetaMapType{
+		waveobj.MetaKey_TmuxPaneId: "",
+	}
+	if err := wstore.UpdateObjectMeta(ctx, oref, meta, false); err != nil {
+		log.Printf("[tmuxcc] block %s clear pane meta: %v", tc.BlockId, err)
+		return
+	}
+	wcore.SendWaveObjUpdate(oref)
+	updates := waveobj.ContextGetUpdatesRtn(ctx)
+	wps.Broker.SendUpdateEvents(updates)
 }
 
 // publishInitialPaneSize queries tmux for our pane's current
