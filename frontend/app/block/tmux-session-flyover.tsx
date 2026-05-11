@@ -19,7 +19,13 @@ import { useEffect, useRef, useState } from "react";
 
 export type TmuxFlyoverEnv = WaveEnvSubset<{
     getBlockMetaKeyAtom: MetaKeyAtomFnType<
-        "controller" | "connection" | "tmux:sessionname" | "tmux:paneid" | "tmux:panerows" | "tmux:panecols"
+        | "controller"
+        | "connection"
+        | "tmux:sessionname"
+        | "tmux:paneid"
+        | "tmux:panerows"
+        | "tmux:panecols"
+        | "tmux:copymode"
     >;
 }>;
 
@@ -36,6 +42,7 @@ export function TmuxSessionFlyover({ blockId, placement = "bottom", divClassName
     const paneId = jotai.useAtomValue(waveEnv.getBlockMetaKeyAtom(blockId, "tmux:paneid"));
     const paneRows = jotai.useAtomValue(waveEnv.getBlockMetaKeyAtom(blockId, "tmux:panerows"));
     const paneCols = jotai.useAtomValue(waveEnv.getBlockMetaKeyAtom(blockId, "tmux:panecols"));
+    const copyMode = jotai.useAtomValue(waveEnv.getBlockMetaKeyAtom(blockId, "tmux:copymode"));
     const connection = jotai.useAtomValue(waveEnv.getBlockMetaKeyAtom(blockId, "connection"));
 
     const [isOpen, setIsOpen] = useState(false);
@@ -81,11 +88,12 @@ export function TmuxSessionFlyover({ blockId, placement = "bottom", divClassName
 
     const hostLabel = !connection || connection === "" ? "local" : connection;
     const sizeLabel = paneRows > 0 && paneCols > 0 ? `${paneCols}×${paneRows}` : null;
+    const iconColor = copyMode ? "text-amber-400" : "text-emerald-500";
 
     return (
         <>
             <div ref={refs.setReference} {...getReferenceProps()} className={divClassName}>
-                <i className="fa-sharp fa-solid fa-table-cells-large text-emerald-500" />
+                <i className={cn("fa-sharp fa-solid fa-table-cells-large", iconColor)} />
             </div>
             {isOpen && (
                 <FloatingPortal>
@@ -105,8 +113,13 @@ export function TmuxSessionFlyover({ blockId, placement = "bottom", divClassName
                     >
                         <div className="flex flex-col gap-1.5">
                             <div className="font-semibold flex items-center gap-2 text-secondary">
-                                <i className="fa-sharp fa-solid fa-table-cells-large text-emerald-500" />
+                                <i className={cn("fa-sharp fa-solid fa-table-cells-large", iconColor)} />
                                 tmux session
+                                {copyMode && (
+                                    <span className="ml-auto rounded bg-amber-500/20 text-amber-300 text-[10px] uppercase tracking-wide px-1.5 py-0.5">
+                                        copy-mode
+                                    </span>
+                                )}
                             </div>
                             <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
                                 <div className="text-muted">Session</div>

@@ -143,6 +143,7 @@ const (
 	MetaKey_TmuxPaneId                       = "tmux:paneid"
 	MetaKey_TmuxPaneRows                     = "tmux:panerows"
 	MetaKey_TmuxPaneCols                     = "tmux:panecols"
+	MetaKey_TmuxCopyMode                     = "tmux:copymode"
 
 	MetaKey_TsunamiClear                     = "tsunami:*"
 	MetaKey_TsunamiSdkReplacePath            = "tsunami:sdkreplacepath"

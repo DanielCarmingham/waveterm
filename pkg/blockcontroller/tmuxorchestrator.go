@@ -168,7 +168,65 @@ func (o *TmuxOrchestrator) handleEvent(ev tmuxcc.Event) {
 		o.onWindowRenamed(v.WindowID, v.Name)
 	case tmuxcc.EventSessionRenamed:
 		o.onSessionRenamed(v.Name)
+	case tmuxcc.EventPaneModeChanged:
+		o.onPaneModeChanged(v.PaneID)
 	}
+}
+
+// onPaneModeChanged queries tmux for the pane's current mode state and
+// writes tmux:copymode meta on the managed block. tmux fires
+// %pane-mode-changed both on entry and exit, so we always have to ask
+// — the event itself doesn't carry the new state.
+func (o *TmuxOrchestrator) onPaneModeChanged(paneID string) {
+	if paneID == "" {
+		return
+	}
+	o.mu.Lock()
+	blockID, ok := o.paneBlocks[paneID]
+	session := o.session
+	o.mu.Unlock()
+	if !ok || session == nil {
+		return
+	}
+	go func() {
+		defer func() {
+			panichandler.PanicHandler("tmuxorchestrator.onPaneModeChanged", recover())
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		lines, err := session.SendCommand(ctx, fmt.Sprintf("display-message -p -t %s %s", paneID, `"#{pane_in_mode}"`))
+		if err != nil {
+			log.Printf("[tmuxorchestrator] pane_in_mode %s: %v", paneID, err)
+			return
+		}
+		inMode := false
+		for _, l := range lines {
+			if l == "1" {
+				inMode = true
+				break
+			}
+		}
+		if err := persistBlockCopyMode(blockID, inMode); err != nil {
+			log.Printf("[tmuxorchestrator] persist copymode for block %s: %v", blockID, err)
+		}
+	}()
+}
+
+func persistBlockCopyMode(blockID string, inMode bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ctx = waveobj.ContextWithUpdates(ctx)
+	oref := waveobj.MakeORef(waveobj.OType_Block, blockID)
+	meta := waveobj.MetaMapType{
+		waveobj.MetaKey_TmuxCopyMode: inMode,
+	}
+	if err := wstore.UpdateObjectMeta(ctx, oref, meta, false); err != nil {
+		return fmt.Errorf("update meta: %w", err)
+	}
+	wcore.SendWaveObjUpdate(oref)
+	updates := waveobj.ContextGetUpdatesRtn(ctx)
+	wps.Broker.SendUpdateEvents(updates)
+	return nil
 }
 
 // onSessionRenamed updates the orchestrator's cached sessionName and
@@ -276,8 +334,25 @@ func (o *TmuxOrchestrator) bootstrapLayout(seedPaneID string) {
 		}
 		if paneID == seedPaneID {
 			o.onLayoutChange(windowID, layout)
+			o.refreshCopyModeForKnownPanes()
 			return
 		}
+	}
+}
+
+// refreshCopyModeForKnownPanes resets stale tmux:copymode meta on
+// reattach. Without this, a wavesrv restart while the user was in
+// copy-mode would leave the badge stuck amber until they entered and
+// exited copy-mode again. We just ask tmux about every managed pane.
+func (o *TmuxOrchestrator) refreshCopyModeForKnownPanes() {
+	o.mu.Lock()
+	pairs := make([][2]string, 0, len(o.paneBlocks))
+	for paneID, blockID := range o.paneBlocks {
+		pairs = append(pairs, [2]string{paneID, blockID})
+	}
+	o.mu.Unlock()
+	for _, pair := range pairs {
+		o.onPaneModeChanged(pair[0])
 	}
 }
 

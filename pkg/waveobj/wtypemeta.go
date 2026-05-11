@@ -147,6 +147,7 @@ type MetaTSType struct {
 	TmuxPaneId        string `json:"tmux:paneid,omitempty"`
 	TmuxPaneRows      int    `json:"tmux:panerows,omitempty"`
 	TmuxPaneCols      int    `json:"tmux:panecols,omitempty"`
+	TmuxCopyMode      bool   `json:"tmux:copymode,omitempty"`
 
 	TsunamiClear          bool              `json:"tsunami:*,omitempty"`
 	TsunamiSdkReplacePath string            `json:"tsunami:sdkreplacepath,omitempty"`

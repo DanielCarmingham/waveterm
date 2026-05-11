@@ -1225,6 +1225,7 @@ declare global {
         "tmux:paneid"?: string;
         "tmux:panerows"?: number;
         "tmux:panecols"?: number;
+        "tmux:copymode"?: boolean;
         "tsunami:*"?: boolean;
         "tsunami:sdkreplacepath"?: string;
         "tsunami:apppath"?: string;
