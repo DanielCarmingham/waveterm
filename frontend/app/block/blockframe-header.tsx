@@ -10,6 +10,7 @@ import {
 } from "@/app/block/blockutil";
 import { ConnectionButton } from "@/app/block/connectionbutton";
 import { DurableSessionFlyover } from "@/app/block/durable-session-flyover";
+import { TmuxSessionFlyover } from "@/app/block/tmux-session-flyover";
 import { getBlockBadgeAtom } from "@/app/store/badge";
 import {
     createBlockSplitHorizontally,
@@ -278,6 +279,14 @@ const BlockFrame_Header = ({
                     viewModel={viewModel}
                     placement="bottom"
                     divClassName="iconbutton disabled text-[13px] ml-[-4px]"
+                />
+            )}
+            {useTermHeader && (
+                <TmuxSessionFlyover
+                    key="tmux-status"
+                    blockId={nodeModel.blockId}
+                    placement="bottom"
+                    divClassName="iconbutton disabled text-[13px]"
                 />
             )}
             {useTermHeader && badge && (
