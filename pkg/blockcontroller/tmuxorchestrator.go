@@ -166,7 +166,53 @@ func (o *TmuxOrchestrator) handleEvent(ev tmuxcc.Event) {
 		o.onWindowClose(v.WindowID)
 	case tmuxcc.EventWindowRenamed:
 		o.onWindowRenamed(v.WindowID, v.Name)
+	case tmuxcc.EventSessionRenamed:
+		o.onSessionRenamed(v.Name)
 	}
+}
+
+// onSessionRenamed updates the orchestrator's cached sessionName and
+// rewrites tmux:sessionname meta on every block it manages, so wavesrv
+// restart re-attaches via the current tmux name rather than the stale
+// one (which would silently create a fresh empty session via
+// new-session -A).
+func (o *TmuxOrchestrator) onSessionRenamed(newName string) {
+	if newName == "" {
+		return
+	}
+	o.mu.Lock()
+	if o.sessionName == newName {
+		o.mu.Unlock()
+		return
+	}
+	o.sessionName = newName
+	blocks := make([]string, 0, len(o.paneBlocks))
+	for _, bid := range o.paneBlocks {
+		blocks = append(blocks, bid)
+	}
+	o.mu.Unlock()
+	for _, bid := range blocks {
+		if err := persistBlockSessionName(bid, newName); err != nil {
+			log.Printf("[tmuxorchestrator] update sessionname for block %s: %v", bid, err)
+		}
+	}
+}
+
+func persistBlockSessionName(blockID, newName string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ctx = waveobj.ContextWithUpdates(ctx)
+	oref := waveobj.MakeORef(waveobj.OType_Block, blockID)
+	meta := waveobj.MetaMapType{
+		waveobj.MetaKey_TmuxSessionName: newName,
+	}
+	if err := wstore.UpdateObjectMeta(ctx, oref, meta, false); err != nil {
+		return fmt.Errorf("update meta: %w", err)
+	}
+	wcore.SendWaveObjUpdate(oref)
+	updates := waveobj.ContextGetUpdatesRtn(ctx)
+	wps.Broker.SendUpdateEvents(updates)
+	return nil
 }
 
 func (o *TmuxOrchestrator) onWindowRenamed(windowID, name string) {

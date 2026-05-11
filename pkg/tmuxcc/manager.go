@@ -98,13 +98,19 @@ func (m *Manager) startNamedUsing(ctx context.Context, name string, cfg SessionC
 		slot.subs[slot.nextID] = cfg.OnEvent
 		slot.nextID++
 	}
-	cfg.OnEvent = func(ev Event) { slot.dispatch(ev) }
+	cfg.OnEvent = func(ev Event) {
+		if rn, ok := ev.(EventSessionRenamed); ok {
+			m.handleSessionRenamed(handle, rn.Name)
+		}
+		slot.dispatch(ev)
+	}
 	userOnExit := cfg.OnExit
 	cfg.OnExit = func(err error) {
 		m.mu.Lock()
+		curName := slot.name
 		delete(m.sessions, handle)
-		if name != "" && m.byName[name] == handle {
-			delete(m.byName, name)
+		if curName != "" && m.byName[curName] == handle {
+			delete(m.byName, curName)
 		}
 		m.mu.Unlock()
 		if userOnExit != nil {
@@ -123,6 +129,32 @@ func (m *Manager) startNamedUsing(ctx context.Context, name string, cfg SessionC
 	}
 	m.mu.Unlock()
 	return handle, s, nil
+}
+
+// handleSessionRenamed updates the manager's byName index and the
+// slot's recorded name when tmux emits %session-renamed for this
+// session. Subscribers still receive the event via the normal dispatch
+// path; this only keeps the registry consistent so future lookups by
+// the new name resolve, and a later EnsureLocalSession with the new
+// name reuses this slot instead of starting another tmux server.
+func (m *Manager) handleSessionRenamed(handle string, newName string) {
+	if newName == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	slot, ok := m.sessions[handle]
+	if !ok {
+		return
+	}
+	if slot.name == newName {
+		return
+	}
+	if slot.name != "" && m.byName[slot.name] == handle {
+		delete(m.byName, slot.name)
+	}
+	slot.name = newName
+	m.byName[newName] = handle
 }
 
 func (slot *sessionSlot) dispatch(ev Event) {
